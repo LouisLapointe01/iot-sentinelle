@@ -22,6 +22,9 @@ def config_temporaire(tmp_path):
         "priv": config.FICHIER_CLE_PRIVEE,
         "pub": config.FICHIER_CLE_PUBLIQUE,
         "aes": config.FICHIER_CLE_AES,
+        "max_bundles": config.MAX_BUNDLES_STOCKES,
+        "sentinel_id": config.SENTINEL_ID,
+        "ble_device_name": config.BLE_DEVICE_NAME,
     }
 
     config.REPERTOIRE_CLES = str(tmp_path / "cles")
@@ -38,6 +41,9 @@ def config_temporaire(tmp_path):
     config.FICHIER_CLE_PRIVEE = ancien["priv"]
     config.FICHIER_CLE_PUBLIQUE = ancien["pub"]
     config.FICHIER_CLE_AES = ancien["aes"]
+    config.MAX_BUNDLES_STOCKES = ancien["max_bundles"]
+    config.SENTINEL_ID = ancien["sentinel_id"]
+    config.BLE_DEVICE_NAME = ancien["ble_device_name"]
 
 
 @pytest.fixture

@@ -1,5 +1,9 @@
 # IoT-Sentinelle
 
+[![Build Android APK](https://github.com/LouisLapointe01/iot-sentinelle/actions/workflows/build-apk.yml/badge.svg)](https://github.com/LouisLapointe01/iot-sentinelle/actions/workflows/build-apk.yml)
+
+**Repo :** [https://github.com/LouisLapointe01/iot-sentinelle](https://github.com/LouisLapointe01/iot-sentinelle)
+
 Système de collecte de données environnementales sécurisé, fonctionnant selon le paradigme **DTN** (*Delay-Tolerant Networking*) : **Store → Carry → Forward**.
 
 ---
