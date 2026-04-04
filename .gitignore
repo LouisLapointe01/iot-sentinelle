@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Clés cryptographiques (ne jamais commiter !)
+raspi_app/cles/
+raspi_app/donnees/
+*.pem
+*.bin
+
+# QR codes générés
+raspi_app/*.png
+raspi_app/**/*.png
+
+# Logs
+*.log
+emulator.log
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Node / Expo
+node_modules/
+mobile_app/dist/
+mobile_app/android/
+mobile_app/ios/
+mobile_app/.expo/
+mobile_app/web-build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
