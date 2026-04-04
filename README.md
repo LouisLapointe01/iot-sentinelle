@@ -14,12 +14,13 @@ Système de collecte de données environnementales sécurisé, fonctionnant selo
 2. [Vue d'ensemble](#vue-densemble)
 3. [Architecture](#architecture)
 4. [Tutoriel de mise en place étape par étape](#tutoriel-de-mise-en-place-étape-par-étape)
-5. [Application Raspberry Pi (`raspi_app`)](#application-raspberry-pi-raspi_app)
-6. [Application mobile (`mobile_app`)](#application-mobile-mobile_app)
-7. [Protocole BLE GATT](#protocole-ble-gatt)
-8. [Sécurité](#sécurité)
-9. [Tests](#tests)
-10. [Structure du projet](#structure-du-projet)
+5. [Déploiement sur Raspberry Pi (guide complet)](#déploiement-sur-raspberry-pi-guide-complet)
+6. [Application Raspberry Pi (`raspi_app`)](#application-raspberry-pi-raspi_app)
+7. [Application mobile (`mobile_app`)](#application-mobile-mobile_app)
+8. [Protocole BLE GATT](#protocole-ble-gatt)
+9. [Sécurité](#sécurité)
+10. [Tests](#tests)
+11. [Structure du projet](#structure-du-projet)
 
 ---
 
@@ -28,7 +29,7 @@ Système de collecte de données environnementales sécurisé, fonctionnant selo
 ### Sentinelle Raspberry Pi — 2 commandes
 
 ```bash
-git clone <url-du-repo> && cd iot-sentinelle
+git clone https://github.com/LouisLapointe01/iot-sentinelle.git && cd iot-sentinelle
 
 # Tout automatique : venv + deps + clés + QR code
 bash bootstrap.sh
@@ -105,7 +106,7 @@ Ce tutoriel couvre les deux scénarios : **développement sur PC** (mode simulat
 ### Étape 1 — Cloner le projet
 
 ```bash
-git clone <url-du-repo>
+git clone https://github.com/LouisLapointe01/iot-sentinelle.git
 cd iot-sentinelle
 ```
 
@@ -242,6 +243,75 @@ make bootstrap        # = bash bootstrap.sh
 make run              # = bash run.sh
 make test             # Tests Python
 make check            # Vérifier l'état
+```
+
+---
+
+## Déploiement sur Raspberry Pi (guide complet)
+
+> Tu as un Raspberry Pi et une carte SD ? Suis ces 6 étapes.
+
+### Étape 1 — Flasher la carte SD
+
+1. Télécharge **[Raspberry Pi Imager](https://www.raspberrypi.com/software/)**
+2. Choisis **Raspberry Pi OS Lite (64-bit)**
+3. Clique sur l'icône ⚙️ *avant* de flasher et configure :
+   - Hostname : `sentinelle`
+   - **Active SSH**
+   - Wi-Fi : ton réseau + mot de passe
+   - Utilisateur : `pi` / mot de passe au choix
+4. Flashe la carte SD, insère-la dans le Pi, branche l'alimentation
+
+### Étape 2 — Se connecter en SSH
+
+Depuis ton PC (attends ~1 min que le Pi démarre) :
+
+```bash
+ssh pi@sentinelle.local
+```
+
+> Si `sentinelle.local` ne répond pas, trouve l'IP dans ton routeur et fais `ssh pi@192.168.x.x`.
+
+### Étape 3 — Récupérer le projet
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/LouisLapointe01/iot-sentinelle.git
+cd iot-sentinelle
+```
+
+### Étape 4 — Installer en une commande
+
+```bash
+bash bootstrap.sh --reel --id sentinelle-001
+```
+
+Ce script fait **tout automatiquement** : Python, dépendances système BLE, clés AES-256 + ECDSA P-256, QR code de déploiement.
+
+### Étape 5 — Lancer la sentinelle
+
+```bash
+bash run.sh --reel --id sentinelle-001
+```
+
+### Étape 6 — Récupérer le QR code
+
+Le QR code est généré dans `raspi_app/donnees/`. Pour l'afficher dans le terminal :
+
+```bash
+cat raspi_app/donnees/qrcode_sentinelle.txt
+```
+
+Colle-le (ou imprime-le) sur le boîtier. L'app mobile Android le scannera pour se connecter en BLE.
+
+---
+
+**Résumé 3 commandes (une fois connecté en SSH) :**
+
+```bash
+git clone https://github.com/LouisLapointe01/iot-sentinelle.git && cd iot-sentinelle
+bash bootstrap.sh --reel --id sentinelle-001
+bash run.sh --reel --id sentinelle-001
 ```
 
 ---
