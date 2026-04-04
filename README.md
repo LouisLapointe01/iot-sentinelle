@@ -538,3 +538,4 @@ mobile_app/
 
 **Auteur :** Louis Lapointe — 2026
 *Développé dans le cadre d'un projet IoT sécurisé.*
+
