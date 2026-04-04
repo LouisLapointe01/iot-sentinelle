@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: mobile_app/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        run: |
+          cd mobile_app
+          npm install
+
+      - name: Expo prebuild (génère le projet Android natif)
+        run: |
+          cd mobile_app
+          npx expo prebuild --platform android --no-install
+
+      - name: Build APK debug
+        run: |
+          cd mobile_app/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK comme artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IoT-Sentinelle-debug
+          path: mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 90
+
+      - name: Créer ou mettre à jour la Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: "IoT-Sentinelle — APK Android (dernière version)"
+          body: |
+            APK de débogage généré automatiquement depuis la branche `main`.
+
+            **Installation :**
+            1. Transférer `app-debug.apk` sur votre Android
+            2. Activer "Sources inconnues" dans les paramètres
+            3. Ouvrir le fichier APK pour installer
+
+            **Permissions requises :** Bluetooth, Caméra, Localisation
+          files: mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
+          make_latest: true
