@@ -1,14 +1,10 @@
 # =============================================================================
 # Makefile -- IoT-Sentinelle : commandes simplifiées
 #
-# Usage :
-#   make setup        Installation complète de la sentinelle (Pi)
-#   make run          Lancer la sentinelle
-#   make test         Tests Python (310 tests)
-#   make apk          Compiler l'APK Android
-#   make test-mobile  Tests Jest (mobile)
-#   make clean        Supprimer les fichiers temporaires
-#   make help         Afficher cette aide
+# Usage rapide (UN SEUL COMMANDE) :
+#   make bootstrap    Installation complète (venv + deps + clés + QR code)
+#   make run          Lancer la sentinelle (simulation)
+#   make test         Tous les tests Python (310 tests)
 # =============================================================================
 
 PYTHON   := python
@@ -19,7 +15,16 @@ NPM      := npm
 RASPI    := raspi_app
 MOBILE   := mobile_app
 
-.PHONY: help setup run test test-v qrcode apk test-mobile clean
+# Venv (créé par bootstrap.sh)
+VENV_PYTHON := $(RASPI)/.venv/bin/python
+VENV_PYTEST := $(RASPI)/.venv/bin/python -m pytest
+# Sur Windows avec Git Bash :
+ifeq ($(OS),Windows_NT)
+	VENV_PYTHON := $(RASPI)/.venv/Scripts/python
+	VENV_PYTEST := $(RASPI)/.venv/Scripts/python -m pytest
+endif
+
+.PHONY: help bootstrap setup run run-reel test test-v qrcode apk test-mobile clean check
 
 # Cible par défaut
 help:
@@ -27,23 +32,39 @@ help:
 	@echo "  IoT-Sentinelle -- Commandes disponibles"
 	@echo "  ========================================"
 	@echo ""
-	@echo "  RASPBERRY PI"
-	@echo "  make setup        Installation complete (deps + cles + QR code)"
-	@echo "  make run          Lancer la sentinelle (mode simulation)"
-	@echo "  make run-reel     Lancer la sentinelle (mode reel - Pi uniquement)"
-	@echo "  make qrcode       Regenerer le QR code de deploiement"
+	@echo "  DÉMARRAGE RAPIDE (une seule commande)"
+	@echo "  make bootstrap    Installation complete + venv + cles + QR code"
+	@echo "  make run          Lancer (simulation, venv auto-détecté)"
 	@echo "  make test         Tous les tests Python (310 tests)"
+	@echo ""
+	@echo "  RASPBERRY PI"
+	@echo "  make setup        Installation sans venv (si déjà activé)"
+	@echo "  make run-reel     Lancer en mode reel (Pi + capteurs physiques)"
+	@echo "  make run-start    Setup + lancement immédiat"
+	@echo "  make qrcode       Regenerer le QR code de deploiement"
+	@echo "  make check        Verifier l'etat du systeme"
 	@echo "  make test-v       Tests Python (mode verbose)"
 	@echo ""
 	@echo "  APPLICATION MOBILE"
 	@echo "  make install-mobile  Installer les dependances npm"
-	@echo "  make apk             Compiler l'APK Android"
+	@echo "  make apk             Compiler l'APK Android (local)"
 	@echo "  make test-mobile     Tests Jest"
 	@echo ""
 	@echo "  UTILITAIRES"
-	@echo "  make check        Verifier l'etat du systeme"
 	@echo "  make clean        Supprimer les fichiers temporaires"
 	@echo ""
+
+# ---------------------------------------------------------------------------
+# DÉMARRAGE RAPIDE
+# ---------------------------------------------------------------------------
+
+bootstrap:
+	@echo "\n>>> Installation complète (venv + deps + clés + QR code)...\n"
+	bash bootstrap.sh
+
+bootstrap-reel:
+	@echo "\n>>> Installation complète en mode réel (Raspberry Pi)...\n"
+	bash bootstrap.sh --reel
 
 # ---------------------------------------------------------------------------
 # RASPBERRY PI
@@ -59,11 +80,11 @@ setup-no-deps:
 
 run:
 	@echo "\n>>> Lancement en mode simulation...\n"
-	cd $(RASPI) && $(PYTHON) main.py
+	bash run.sh
 
 run-reel:
 	@echo "\n>>> Lancement en mode reel (Raspberry Pi)...\n"
-	cd $(RASPI) && SENTINEL_SIMULATION=false $(PYTHON) main.py
+	bash run.sh --reel
 
 run-start:
 	@echo "\n>>> Setup + lancement automatique...\n"
@@ -78,7 +99,7 @@ check:
 	cd $(RASPI) && $(PYTHON) installer.py --check
 
 test:
-	@echo "\n>>> Tests Python...\n"
+	@echo "\n>>> Tests Python (310 tests)...\n"
 	cd $(RASPI) && $(PYTEST) tests/ --tb=short -q
 
 test-v:
@@ -98,7 +119,7 @@ install-mobile:
 	cd $(MOBILE) && $(NPM) install
 
 apk:
-	@echo "\n>>> Compilation de l'APK Android...\n"
+	@echo "\n>>> Compilation de l'APK Android (local)...\n"
 	cd $(MOBILE) && $(NPM) run apk
 
 test-mobile:

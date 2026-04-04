@@ -6,22 +6,38 @@ Système de collecte de données environnementales sécurisé, fonctionnant selo
 
 ## Sommaire
 
-1. [Vue d'ensemble](#vue-densemble)
-2. [Architecture](#architecture)
-3. [Application Raspberry Pi (`raspi_app`)](#application-raspberry-pi-raspi_app)
-   - [Prérequis et installation](#prérequis-et-installation)
-   - [Configuration](#configuration)
-   - [Lancement](#lancement)
-4. [Application mobile (`mobile_app`)](#application-mobile-mobile_app)
-   - [Prérequis et installation](#prérequis-et-installation-1)
-   - [Build (obligatoire)](#build-obligatoire)
-   - [Lancement](#lancement-1)
-5. [Protocole BLE GATT](#protocole-ble-gatt)
-   - [Service et caractéristiques](#service-et-caractéristiques)
-   - [Protocole de chunking](#protocole-de-chunking)
-6. [Sécurité](#sécurité)
-7. [Tests](#tests)
-8. [Structure du projet](#structure-du-projet)
+1. [Démarrage rapide (TL;DR)](#démarrage-rapide-tldr)
+2. [Vue d'ensemble](#vue-densemble)
+3. [Architecture](#architecture)
+4. [Tutoriel de mise en place étape par étape](#tutoriel-de-mise-en-place-étape-par-étape)
+5. [Application Raspberry Pi (`raspi_app`)](#application-raspberry-pi-raspi_app)
+6. [Application mobile (`mobile_app`)](#application-mobile-mobile_app)
+7. [Protocole BLE GATT](#protocole-ble-gatt)
+8. [Sécurité](#sécurité)
+9. [Tests](#tests)
+10. [Structure du projet](#structure-du-projet)
+
+---
+
+## Démarrage rapide (TL;DR)
+
+### Sentinelle Raspberry Pi — 2 commandes
+
+```bash
+git clone <url-du-repo> && cd iot-sentinelle
+
+# Tout automatique : venv + deps + clés + QR code
+bash bootstrap.sh
+
+# Lancer
+bash run.sh
+```
+
+### Application mobile Android — APK prêt à l'emploi
+
+Télécharger directement depuis **[GitHub Releases](../../releases/latest)** → `app-debug.apk`
+
+> L'APK est recompilé automatiquement à chaque mise à jour du code (GitHub Actions).
 
 ---
 
@@ -91,58 +107,49 @@ cd iot-sentinelle
 
 ---
 
-### Étape 2 — Préparer le Raspberry Pi (déploiement réel uniquement)
-
-> Passer cette étape en mode simulation sur PC.
-
-**2.1 Activer Bluetooth**
+### Étape 2 — Tout installer en une commande
 
 ```bash
-sudo systemctl enable bluetooth
-sudo systemctl start bluetooth
+bash bootstrap.sh
 ```
 
-**2.2 Activer l'I2C** (pour le BME280)
+Ce script fait **tout automatiquement** :
+- Détecte et vérifie Python 3.10+
+- Crée l'environnement virtuel (`raspi_app/.venv`)
+- Installe toutes les dépendances pip
+- Génère les clés AES-256 et ECDSA P-256
+- Génère le QR code de déploiement
+- Affiche un résumé de vérification
+
+**Options disponibles :**
+
+| Commande | Description |
+|----------|-------------|
+| `bash bootstrap.sh` | Mode simulation (PC, sans capteurs) |
+| `bash bootstrap.sh --reel` | Mode réel (Raspberry Pi + capteurs) |
+| `bash bootstrap.sh --id sentinelle-042` | Identifiant personnalisé |
+| `bash bootstrap.sh --lancer` | Installer et lancer immédiatement |
+
+---
+
+### Étape 3 — (Raspberry Pi réel uniquement) Préparer le matériel
+
+> Sauter cette étape en mode simulation sur PC.
+
+**3.1 Activer Bluetooth**
+
+```bash
+sudo systemctl enable bluetooth && sudo systemctl start bluetooth
+```
+
+**3.2 Activer l'I2C** (pour le BME280)
 
 ```bash
 sudo raspi-config
 # Interface Options → I2C → Yes
 ```
 
-**2.3 Installer les dépendances système BLE**
-
-```bash
-sudo apt-get update
-sudo apt-get install -y python3-dbus python3-gi libglib2.0-dev
-```
-
----
-
-### Étape 3 — Créer et activer l'environnement Python
-
-```bash
-cd raspi_app
-python3 -m venv .venv
-source .venv/bin/activate   # Linux / macOS / Pi
-# ou sur Windows :
-# .venv\Scripts\activate
-```
-
-> Vérifier : `python --version` doit afficher Python 3.10 ou supérieur.
-
----
-
-### Étape 4 — Installer les dépendances Python
-
-```bash
-# Installation automatique (recommandé)
-python installer.py
-
-# Ou manuellement :
-pip install -r requirements.txt
-```
-
-Pour les capteurs physiques sur Raspberry Pi, décommenter dans `requirements.txt` :
+**3.3 Capteurs physiques** — Décommenter dans `raspi_app/requirements.txt` :
 
 ```
 adafruit-circuitpython-dht>=4.0.0
@@ -151,150 +158,86 @@ smbus2>=0.4.3
 pyserial>=3.5
 ```
 
-Puis réinstaller :
+> `bootstrap.sh --reel` installe aussi les dépendances système BLE automatiquement.
+
+---
+
+### Étape 4 — Vérifier l'installation
 
 ```bash
-pip install -r requirements.txt
+bash run.sh --test
 ```
 
-Pour le serveur BLE (D-Bus/BlueZ), ajouter les dépendances système :
+Sortie attendue : `310 passed`
+
+Ou pour vérifier l'état du système :
 
 ```bash
-sudo apt-get install python3-dbus python3-gi libglib2.0-dev
+bash bootstrap.sh     # réexécuter bootstrap est idempotent (ne régénère pas les clés)
+# ou :
+cd raspi_app && python installer.py --check
 ```
 
 ---
 
-### Étape 5 — Générer les clés cryptographiques
+### Étape 5 — Lancer la sentinelle
 
 ```bash
-python installer.py --no-deps
-```
+# Mode simulation (PC)
+bash run.sh
 
-Ce script crée automatiquement dans `raspi_app/cles/` :
-- `cle_aes.bin` — clé AES-256 (32 octets aléatoires)
-- `cle_privee.pem` — clé privée ECDSA P-256
-- `cle_publique.pem` — clé publique ECDSA P-256
+# Mode réel (Raspberry Pi)
+bash run.sh --reel
 
-> Ces fichiers sont exclus du git (`.gitignore`). **Ne jamais les versionner.**
-
----
-
-### Étape 6 — Vérifier l'état du système
-
-```bash
-python installer.py --check
-```
-
-Sortie attendue :
-
-```
-=== État de la sentinelle ===
-  [OK] Python 3.12
-  [OK] Clé AES présente
-  [OK] Clés ECDSA présentes
-  [INFO] Base SQLite absente (créée au premier lancement)
-  [INFO] Sentinel ID : sentinelle-001
-  [INFO] Mode simulation : True
-```
-
----
-
-### Étape 7 — (Optionnel) Personnaliser l'identifiant
-
-Chaque sentinelle déployée doit avoir un identifiant unique. Deux méthodes :
-
-**Via variable d'environnement (sans modifier le code) :**
-
-```bash
-export SENTINEL_ID=sentinelle-042
-```
-
-**Via `.env` (persistant) :**
-
-```bash
-echo "SENTINEL_ID=sentinelle-042" >> .env
-# Puis charger au lancement :
-env $(cat .env) python main.py
-```
-
----
-
-### Étape 8 — Générer le QR code de déploiement
-
-```bash
-python utils/qrcode_gen.py
-# → génère qrcode_sentinelle-001.png (ou l'ID personnalisé)
-```
-
-Ce QR code est collé sur le boîtier physique de la sentinelle. L'application mobile le scanne pour connaître l'UUID BLE et la clé publique ECDSA.
-
----
-
-### Étape 9 — Lancer la sentinelle
-
-**Mode simulation (PC, sans capteurs physiques) :**
-
-```bash
-python main.py
-```
-
-**Mode réel (Raspberry Pi avec capteurs) :**
-
-```bash
-SENTINEL_SIMULATION=false python main.py
-```
-
-**Mode réel avec ID personnalisé :**
-
-```bash
-SENTINEL_ID=sentinelle-042 SENTINEL_SIMULATION=false python main.py
+# Identifiant personnalisé
+bash run.sh --id sentinelle-042 --reel
 ```
 
 Sortie attendue au démarrage :
 
 ```
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : ============================================================
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   SENTINELLE DTN -- sentinelle-001
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   Firmware v1.0.0
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   Mode simulation : True
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 1 : Initialisation des clés cryptographiques...
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 2 : Initialisation des capteurs...
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 3 : Initialisation de la base de données...
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 4 : Démarrage du serveur BLE...
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 5 : Initialisation du gestionnaire d'énergie...
-2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Boucle principale démarrée. Ctrl+C pour arrêter.
+2026-04-04 10:00:00 [INFO] sentinelle.main : SENTINELLE DTN -- sentinelle-001
+2026-04-04 10:00:00 [INFO] sentinelle.main : Firmware v1.0.0
+2026-04-04 10:00:00 [INFO] sentinelle.main : Mode simulation : True
+2026-04-04 10:00:00 [INFO] sentinelle.main : Boucle principale démarrée. Ctrl+C pour arrêter.
 ```
 
 Arrêt propre : **Ctrl+C**
 
 ---
 
-### Étape 10 — Installer et lancer l'application mobile
+### Étape 6 — Installer et lancer l'application mobile
 
-Voir la section [Application mobile](#application-mobile-mobile_app) ci-dessous pour le détail complet.
+**Option A (recommandée) : télécharger l'APK prêt à l'emploi**
 
-En résumé :
+1. Aller sur **[GitHub Releases](../../releases/latest)**
+2. Télécharger `app-debug.apk`
+3. L'installer sur Android (activer "Sources inconnues" si nécessaire)
+
+**Option B : compiler localement** (nécessite Android Studio)
 
 ```bash
-cd ../mobile_app
+cd mobile_app
 npm install
-npx expo run:android    # ou run:ios
+npm run apk
+# → android/app/build/outputs/apk/debug/app-debug.apk
 ```
-
-Puis scanner le QR code affiché par la sentinelle pour initier la connexion BLE.
 
 ---
 
-### Récapitulatif des commandes (via Makefile)
+### Récapitulatif des commandes
 
 ```bash
-make setup          # Étapes 4+5 en une commande
-make check          # Étape 6
-make run            # Étape 9 (mode simulation)
-make run-reel       # Étape 9 (mode réel)
-make qrcode         # Étape 8
-make test           # Lancer les 310 tests Python
+bash bootstrap.sh     # TOUT installer (une seule fois)
+bash run.sh           # Lancer la sentinelle
+bash run.sh --test    # Lancer les 310 tests
+bash run.sh --reel    # Mode Raspberry Pi réel
+
+# Via Makefile (si préféré)
+make bootstrap        # = bash bootstrap.sh
+make run              # = bash run.sh
+make test             # Tests Python
+make check            # Vérifier l'état
 ```
 
 ---
