@@ -1,5 +1,8 @@
-import { registerRootComponent } from 'expo';
+// Polyfill Buffer pour react-native-ble-plx et mqtt (encodage base64/UTF-8)
+import { Buffer } from 'buffer';
+(global as any).Buffer = Buffer;
 
+import { registerRootComponent } from 'expo';
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

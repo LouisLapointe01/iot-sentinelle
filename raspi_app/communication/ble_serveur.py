@@ -8,12 +8,19 @@ Service GATT personnalise "Sentinelle DTN" :
   UUID du service : 12345678-1234-5678-1234-56789abcdef0
 
   Caracteristiques :
-  - BUNDLE_DATA   (Read)         : donnees du bundle selectionne (JSON)
+  - BUNDLE_DATA   (Read)         : chunk courant du bundle selectionne (JSON)
   - PUBLIC_KEY    (Read)         : cle publique ECDSA (PEM)
   - SENTINEL_INFO (Read)         : metadonnees sentinelle (JSON)
   - BUNDLE_ACK    (Write)        : acquittement d'un bundle
   - BUNDLE_COUNT  (Read/Notify)  : nombre de bundles en attente
   - BUNDLE_SELECT (Write)        : selection du bundle a lire par index
+
+Protocole de transfert chunke (pour les bundles > 512 octets) :
+  1. La mule ecrit l'index dans BUNDLE_SELECT.
+  2. Chaque lecture de BUNDLE_DATA retourne un chunk JSON :
+       {"total": N, "chunk": i, "data": "<donnees>"}
+  3. La mule lit en boucle jusqu'a ce que chunk == total - 1.
+  4. La mule reconstitue le JSON complet en concatenant les champs "data".
 
 L'implementation utilise l'API D-Bus de BlueZ.
 Note : ce module necessite les droits root (sudo) pour acceder au Bluetooth.
@@ -26,6 +33,11 @@ import threading
 import config
 
 logger = logging.getLogger(__name__)
+
+# Taille maximale des donnees utiles par chunk BLE (en octets).
+# Les caracteristiques BLE GATT ont une taille max de 512 octets.
+# On reserve ~110 octets pour l'enveloppe JSON {"total":N,"chunk":i,"data":"..."}.
+BLE_CHUNK_SIZE = 400
 
 # Ici, on tente d'importer les bibliotheques D-Bus/BlueZ.
 # Ces imports echoueront sur un PC de developpement (Windows/Mac).
@@ -263,22 +275,69 @@ class ApplicationGATT(_BaseDBusObject):
 # =============================================================================
 
 class CaracBundleData(Caracteristique):
-    """Ici, retourne le contenu JSON du bundle selectionne par index."""
+    """
+    Ici, retourne le contenu JSON du bundle selectionne par index, en chunks.
+
+    Protocole :
+    - La mule ecrit l'index dans BUNDLE_SELECT, ce qui appelle selectionner().
+    - Chaque ReadValue retourne un chunk JSON :
+        {"total": N, "chunk": i, "data": "<partie du JSON>"}
+    - La mule lit en boucle jusqu'a chunk == total - 1, puis reconstruit le JSON.
+    """
 
     def __init__(self, bus, index, service, base_locale):
         super().__init__(bus, index, config.BLE_CHAR_BUNDLE_DATA_UUID, ["read"], service)
         self.base_locale = base_locale
-        self.index_selectionne = 0
+        self.chunks: list = []
+        self.chunk_idx: int = 0
+
+    def selectionner(self, index: int):
+        """
+        Ici, on charge le bundle a l'index donne et on le decoupe en chunks
+        de BLE_CHUNK_SIZE octets pour respecter la limite BLE de 512 octets
+        par caracteristique.
+        """
+        bundle = self.base_locale.recuperer_bundle_par_index(index)
+        if bundle is None:
+            full_json = json.dumps({"erreur": "aucun_bundle"})
+        else:
+            full_json = json.dumps(bundle)
+
+        # Ici, on decoupe le JSON en segments de BLE_CHUNK_SIZE octets.
+        self.chunks = [
+            full_json[i: i + BLE_CHUNK_SIZE]
+            for i in range(0, len(full_json), BLE_CHUNK_SIZE)
+        ]
+        if not self.chunks:
+            self.chunks = [""]
+        self.chunk_idx = 0
+
+        logger.debug(
+            f"Bundle index={index} prepare : {len(full_json)} octets, "
+            f"{len(self.chunks)} chunk(s) de {BLE_CHUNK_SIZE} octets max"
+        )
 
     if DBUS_DISPONIBLE:
         @dbus.service.method(GATT_CHRC_IFACE, in_signature="a{sv}", out_signature="ay")
         def ReadValue(self, options):
-            bundle = self.base_locale.recuperer_bundle_par_index(self.index_selectionne)
-            if bundle is None:
-                donnees = json.dumps({"erreur": "aucun_bundle"}).encode("utf-8")
-            else:
-                donnees = json.dumps(bundle).encode("utf-8")
-            return dbus.Array(donnees, signature="y")
+            # Ici, si aucun bundle n'a encore ete selectionne, on charge le premier.
+            if not self.chunks:
+                self.selectionner(0)
+
+            total = len(self.chunks)
+            idx = min(self.chunk_idx, total - 1)
+
+            enveloppe = json.dumps({
+                "total": total,
+                "chunk": idx,
+                "data": self.chunks[idx],
+            })
+
+            # Ici, on avance le pointeur pour la prochaine lecture.
+            if self.chunk_idx < total - 1:
+                self.chunk_idx += 1
+
+            return dbus.Array(enveloppe.encode("utf-8"), signature="y")
 
 
 class CaracPublicKey(Caracteristique):
@@ -351,7 +410,11 @@ class CaracBundleCount(Caracteristique):
 
 
 class CaracBundleSelect(Caracteristique):
-    """Ici, la mule ecrit un index pour selectionner le bundle a lire."""
+    """
+    Ici, la mule ecrit un index (entier en UTF-8) pour selectionner le bundle
+    a lire. Cette ecriture declenche la preparation des chunks dans
+    CaracBundleData, ce qui remet a zero le pointeur de chunk.
+    """
 
     def __init__(self, bus, index, service, carac_bundle_data):
         super().__init__(bus, index, config.BLE_CHAR_BUNDLE_SELECT_UUID, ["write"], service)
@@ -362,7 +425,8 @@ class CaracBundleSelect(Caracteristique):
         def WriteValue(self, value, options):
             try:
                 idx = int(bytes(value).decode("utf-8").strip())
-                self.carac_bundle_data.index_selectionne = idx
+                # Ici, on prepare les chunks pour le bundle selectionne.
+                self.carac_bundle_data.selectionner(idx)
             except (ValueError, UnicodeDecodeError) as erreur:
                 logger.warning(f"BLE BUNDLE_SELECT : valeur invalide : {erreur}")
 
@@ -423,6 +487,7 @@ class ServeurBLE:
             carac_info = CaracSentinelInfo(bus, 2, service, self.base_locale)
             carac_ack = CaracBundleAck(bus, 3, service, self.base_locale)
             self.carac_bundle_count = CaracBundleCount(bus, 4, service, self.base_locale)
+            # Ici, on passe carac_data a carac_sel pour qu'il puisse appeler selectionner().
             carac_sel = CaracBundleSelect(bus, 5, service, carac_data)
 
             for c in [carac_data, carac_pk, carac_info, carac_ack,

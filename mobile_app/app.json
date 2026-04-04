@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BE",
+    "name": "IoT-Sentinelle",
     "slug": "be",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "IoT-Sentinelle utilise le Bluetooth pour se connecter a la sentinelle et recuperer les donnees environnementales.",
+        "NSBluetoothPeripheralUsageDescription": "IoT-Sentinelle utilise le Bluetooth pour se connecter a la sentinelle et recuperer les donnees environnementales."
+      }
     },
     "android": {
       "package": "com.collet.be",
@@ -23,7 +27,12 @@
         "backgroundColor": "#ffffff"
       },
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -31,7 +40,15 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow BE to access your camera"
+          "cameraPermission": "IoT-Sentinelle utilise la camera pour scanner les QR codes des sentinelles."
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "IoT-Sentinelle utilise le Bluetooth pour se connecter a la sentinelle et recuperer les donnees environnementales."
         }
       ]
     ],

@@ -24,6 +24,7 @@ import uuid
 import sqlite3
 import logging
 import base64
+import threading
 from datetime import datetime, timezone
 
 import config
@@ -55,24 +56,29 @@ class BaseLocale:
         self.connexion.execute("PRAGMA journal_mode=WAL")
         self.connexion.row_factory = sqlite3.Row
 
+        # Ici, le verrou serialise les acces concurrent entre le thread principal
+        # (ecriture des bundles) et le thread BLE (lecture et acquittement).
+        self._lock = threading.Lock()
+
         self._creer_table()
         logger.info(f"Base de donnees initialisee : {config.FICHIER_BASE_DONNEES}")
 
     def _creer_table(self):
         """Ici, on cree la table des bundles si elle n'existe pas."""
-        self.connexion.execute("""
-            CREATE TABLE IF NOT EXISTS bundles (
-                bundle_id TEXT PRIMARY KEY,
-                iv TEXT NOT NULL,
-                donnees_chiffrees TEXT NOT NULL,
-                signature TEXT NOT NULL,
-                nonce TEXT NOT NULL,
-                horodatage TEXT NOT NULL,
-                statut TEXT NOT NULL DEFAULT 'en_attente',
-                nb_mesures INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        self.connexion.commit()
+        with self._lock:
+            self.connexion.execute("""
+                CREATE TABLE IF NOT EXISTS bundles (
+                    bundle_id TEXT PRIMARY KEY,
+                    iv TEXT NOT NULL,
+                    donnees_chiffrees TEXT NOT NULL,
+                    signature TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    horodatage TEXT NOT NULL,
+                    statut TEXT NOT NULL DEFAULT 'en_attente',
+                    nb_mesures INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            self.connexion.commit()
 
     def stocker_bundle(self, iv, donnees_chiffrees, signature, nonce, nb_mesures):
         """
@@ -96,28 +102,30 @@ class BaseLocale:
         donnees_b64 = base64.b64encode(donnees_chiffrees).decode("ascii")
         signature_b64 = base64.b64encode(signature).decode("ascii")
 
-        self.connexion.execute(
-            """
-            INSERT INTO bundles
-                (bundle_id, iv, donnees_chiffrees, signature, nonce,
-                 horodatage, statut, nb_mesures)
-            VALUES (?, ?, ?, ?, ?, ?, 'en_attente', ?)
-            """,
-            (bundle_id, iv_b64, donnees_b64, signature_b64,
-             nonce, horodatage, nb_mesures),
-        )
-        self.connexion.commit()
-        self._nettoyer_anciens()
+        with self._lock:
+            self.connexion.execute(
+                """
+                INSERT INTO bundles
+                    (bundle_id, iv, donnees_chiffrees, signature, nonce,
+                     horodatage, statut, nb_mesures)
+                VALUES (?, ?, ?, ?, ?, ?, 'en_attente', ?)
+                """,
+                (bundle_id, iv_b64, donnees_b64, signature_b64,
+                 nonce, horodatage, nb_mesures),
+            )
+            self.connexion.commit()
+            self._nettoyer_anciens_sans_verrou()
 
         logger.info(f"Bundle stocke : id={bundle_id[:8]}..., {nb_mesures} mesures")
         return bundle_id
 
     def compter_bundles_en_attente(self):
         """Ici, on compte les bundles pas encore transferes a une mule."""
-        curseur = self.connexion.execute(
-            "SELECT COUNT(*) FROM bundles WHERE statut = 'en_attente'"
-        )
-        return curseur.fetchone()[0]
+        with self._lock:
+            curseur = self.connexion.execute(
+                "SELECT COUNT(*) FROM bundles WHERE statut = 'en_attente'"
+            )
+            return curseur.fetchone()[0]
 
     def recuperer_bundle_par_index(self, index):
         """
@@ -129,18 +137,20 @@ class BaseLocale:
         Returns:
             Dictionnaire du bundle, ou None si l'index est invalide.
         """
-        curseur = self.connexion.execute(
-            """
-            SELECT bundle_id, iv, donnees_chiffrees, signature, nonce,
-                   horodatage, nb_mesures
-            FROM bundles
-            WHERE statut = 'en_attente'
-            ORDER BY horodatage ASC
-            LIMIT 1 OFFSET ?
-            """,
-            (index,),
-        )
-        ligne = curseur.fetchone()
+        with self._lock:
+            curseur = self.connexion.execute(
+                """
+                SELECT bundle_id, iv, donnees_chiffrees, signature, nonce,
+                       horodatage, nb_mesures
+                FROM bundles
+                WHERE statut = 'en_attente'
+                ORDER BY horodatage ASC
+                LIMIT 1 OFFSET ?
+                """,
+                (index,),
+            )
+            ligne = curseur.fetchone()
+
         if ligne is None:
             return None
 
@@ -162,19 +172,24 @@ class BaseLocale:
         Returns:
             True si le bundle a ete marque, False sinon.
         """
-        curseur = self.connexion.execute(
-            "UPDATE bundles SET statut = 'transfere' "
-            "WHERE bundle_id = ? AND statut = 'en_attente'",
-            (bundle_id,),
-        )
-        self.connexion.commit()
-        succes = curseur.rowcount > 0
+        with self._lock:
+            curseur = self.connexion.execute(
+                "UPDATE bundles SET statut = 'transfere' "
+                "WHERE bundle_id = ? AND statut = 'en_attente'",
+                (bundle_id,),
+            )
+            self.connexion.commit()
+            succes = curseur.rowcount > 0
+
         if succes:
             logger.info(f"Bundle {bundle_id[:8]}... marque comme transfere")
         return succes
 
-    def _nettoyer_anciens(self):
-        """Ici, on supprime les anciens bundles si on depasse la limite."""
+    def _nettoyer_anciens_sans_verrou(self):
+        """
+        Ici, on supprime les anciens bundles si on depasse la limite.
+        ATTENTION : doit etre appelee avec self._lock deja acquis.
+        """
         curseur = self.connexion.execute("SELECT COUNT(*) FROM bundles")
         total = curseur.fetchone()[0]
 
@@ -197,6 +212,7 @@ class BaseLocale:
 
     def fermer(self):
         """Ici, on ferme proprement la connexion a la base de donnees."""
-        if self.connexion:
-            self.connexion.close()
-            logger.info("Base de donnees fermee proprement")
+        with self._lock:
+            if self.connexion:
+                self.connexion.close()
+                logger.info("Base de donnees fermee proprement")
