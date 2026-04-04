@@ -63,7 +63,7 @@ iot-sentinelle/
 │   │   └── gestionnaire.py     # Veille CPU, adaptation intervalle selon batterie
 │   ├── utils/
 │   │   └── qrcode_gen.py       # Génération du QR code de déploiement
-│   ├── tests/                  # 185 tests pytest (100 % de réussite)
+│   ├── tests/                  # 310 tests pytest (100 % de réussite)
 │   └── requirements.txt
 │
 └── mobile_app/                 # Application React Native / Expo
@@ -72,6 +72,229 @@ iot-sentinelle/
     ├── app.json                # Config Expo + permissions BLE/caméra
     ├── package.json            # Dépendances (ble-plx, mqtt, buffer…)
     └── __tests__/              # Tests Jest + snapshots
+```
+
+---
+
+## Tutoriel de mise en place étape par étape
+
+Ce tutoriel couvre les deux scénarios : **développement sur PC** (mode simulation) et **déploiement réel sur Raspberry Pi**.
+
+---
+
+### Étape 1 — Cloner le projet
+
+```bash
+git clone <url-du-repo>
+cd iot-sentinelle
+```
+
+---
+
+### Étape 2 — Préparer le Raspberry Pi (déploiement réel uniquement)
+
+> Passer cette étape en mode simulation sur PC.
+
+**2.1 Activer Bluetooth**
+
+```bash
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
+```
+
+**2.2 Activer l'I2C** (pour le BME280)
+
+```bash
+sudo raspi-config
+# Interface Options → I2C → Yes
+```
+
+**2.3 Installer les dépendances système BLE**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-dbus python3-gi libglib2.0-dev
+```
+
+---
+
+### Étape 3 — Créer et activer l'environnement Python
+
+```bash
+cd raspi_app
+python3 -m venv .venv
+source .venv/bin/activate   # Linux / macOS / Pi
+# ou sur Windows :
+# .venv\Scripts\activate
+```
+
+> Vérifier : `python --version` doit afficher Python 3.10 ou supérieur.
+
+---
+
+### Étape 4 — Installer les dépendances Python
+
+```bash
+# Installation automatique (recommandé)
+python installer.py
+
+# Ou manuellement :
+pip install -r requirements.txt
+```
+
+Pour les capteurs physiques sur Raspberry Pi, décommenter dans `requirements.txt` :
+
+```
+adafruit-circuitpython-dht>=4.0.0
+RPi.bme280>=0.2.4
+smbus2>=0.4.3
+pyserial>=3.5
+```
+
+Puis réinstaller :
+
+```bash
+pip install -r requirements.txt
+```
+
+Pour le serveur BLE (D-Bus/BlueZ), ajouter les dépendances système :
+
+```bash
+sudo apt-get install python3-dbus python3-gi libglib2.0-dev
+```
+
+---
+
+### Étape 5 — Générer les clés cryptographiques
+
+```bash
+python installer.py --no-deps
+```
+
+Ce script crée automatiquement dans `raspi_app/cles/` :
+- `cle_aes.bin` — clé AES-256 (32 octets aléatoires)
+- `cle_privee.pem` — clé privée ECDSA P-256
+- `cle_publique.pem` — clé publique ECDSA P-256
+
+> Ces fichiers sont exclus du git (`.gitignore`). **Ne jamais les versionner.**
+
+---
+
+### Étape 6 — Vérifier l'état du système
+
+```bash
+python installer.py --check
+```
+
+Sortie attendue :
+
+```
+=== État de la sentinelle ===
+  [OK] Python 3.12
+  [OK] Clé AES présente
+  [OK] Clés ECDSA présentes
+  [INFO] Base SQLite absente (créée au premier lancement)
+  [INFO] Sentinel ID : sentinelle-001
+  [INFO] Mode simulation : True
+```
+
+---
+
+### Étape 7 — (Optionnel) Personnaliser l'identifiant
+
+Chaque sentinelle déployée doit avoir un identifiant unique. Deux méthodes :
+
+**Via variable d'environnement (sans modifier le code) :**
+
+```bash
+export SENTINEL_ID=sentinelle-042
+```
+
+**Via `.env` (persistant) :**
+
+```bash
+echo "SENTINEL_ID=sentinelle-042" >> .env
+# Puis charger au lancement :
+env $(cat .env) python main.py
+```
+
+---
+
+### Étape 8 — Générer le QR code de déploiement
+
+```bash
+python utils/qrcode_gen.py
+# → génère qrcode_sentinelle-001.png (ou l'ID personnalisé)
+```
+
+Ce QR code est collé sur le boîtier physique de la sentinelle. L'application mobile le scanne pour connaître l'UUID BLE et la clé publique ECDSA.
+
+---
+
+### Étape 9 — Lancer la sentinelle
+
+**Mode simulation (PC, sans capteurs physiques) :**
+
+```bash
+python main.py
+```
+
+**Mode réel (Raspberry Pi avec capteurs) :**
+
+```bash
+SENTINEL_SIMULATION=false python main.py
+```
+
+**Mode réel avec ID personnalisé :**
+
+```bash
+SENTINEL_ID=sentinelle-042 SENTINEL_SIMULATION=false python main.py
+```
+
+Sortie attendue au démarrage :
+
+```
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : ============================================================
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   SENTINELLE DTN -- sentinelle-001
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   Firmware v1.0.0
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    :   Mode simulation : True
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 1 : Initialisation des clés cryptographiques...
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 2 : Initialisation des capteurs...
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 3 : Initialisation de la base de données...
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 4 : Démarrage du serveur BLE...
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Phase 5 : Initialisation du gestionnaire d'énergie...
+2026-04-04 10:00:00 [INFO    ] sentinelle.main    : Boucle principale démarrée. Ctrl+C pour arrêter.
+```
+
+Arrêt propre : **Ctrl+C**
+
+---
+
+### Étape 10 — Installer et lancer l'application mobile
+
+Voir la section [Application mobile](#application-mobile-mobile_app) ci-dessous pour le détail complet.
+
+En résumé :
+
+```bash
+cd ../mobile_app
+npm install
+npx expo run:android    # ou run:ios
+```
+
+Puis scanner le QR code affiché par la sentinelle pour initier la connexion BLE.
+
+---
+
+### Récapitulatif des commandes (via Makefile)
+
+```bash
+make setup          # Étapes 4+5 en une commande
+make check          # Étape 6
+make run            # Étape 9 (mode simulation)
+make run-reel       # Étape 9 (mode réel)
+make qrcode         # Étape 8
+make test           # Lancer les 310 tests Python
 ```
 
 ---
@@ -304,7 +527,7 @@ cd raspi_app
 python -m pytest tests/ -v
 ```
 
-**185 tests — 100 % de réussite.**
+**310 tests — 100 % de réussite.**
 
 | Fichier | Tests | Couverture |
 |---------|-------|-----------|
@@ -316,6 +539,10 @@ python -m pytest tests/ -v
 | `test_config.py` | 37 | UUIDs (cohérence Python↔TypeScript), types, valeurs |
 | `test_qrcode.py` | 11 | Génération QR, contenu JSON, fallback MAC BLE |
 | `test_integration.py` | 20 | Pipeline DTN bout-en-bout + test de concurrence |
+| `test_installer.py` | 36 | Installation automatique, CLI, vérification d'état |
+| `test_setup_integration.py` | 31 | Setup depuis zéro, idempotence, variables d'env, CLI |
+| `test_main_loop.py` | 23 | Boucle principale mockée, signaux, cycles, arrêt propre |
+| `test_fonctionnement_global.py` | 35 | Pipeline DTN complet, BLE bout en bout, concurrence |
 
 Le test `test_uuids_coherents_avec_app_tsx` détecte automatiquement toute désynchronisation entre les UUIDs de `config.py` et ceux de `App.tsx`.
 

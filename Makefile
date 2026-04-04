@@ -4,7 +4,7 @@
 # Usage :
 #   make setup        Installation complète de la sentinelle (Pi)
 #   make run          Lancer la sentinelle
-#   make test         Tests Python (185 tests)
+#   make test         Tests Python (310 tests)
 #   make apk          Compiler l'APK Android
 #   make test-mobile  Tests Jest (mobile)
 #   make clean        Supprimer les fichiers temporaires
@@ -32,7 +32,7 @@ help:
 	@echo "  make run          Lancer la sentinelle (mode simulation)"
 	@echo "  make run-reel     Lancer la sentinelle (mode reel - Pi uniquement)"
 	@echo "  make qrcode       Regenerer le QR code de deploiement"
-	@echo "  make test         Tous les tests Python (185 tests)"
+	@echo "  make test         Tous les tests Python (310 tests)"
 	@echo "  make test-v       Tests Python (mode verbose)"
 	@echo ""
 	@echo "  APPLICATION MOBILE"
