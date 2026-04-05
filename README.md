@@ -6,6 +6,12 @@
 
 Système de collecte de données environnementales sécurisé, fonctionnant selon le paradigme **DTN** (*Delay-Tolerant Networking*) : **Store → Carry → Forward**.
 
+```
+[Sentinelle Pi]  --BLE-->  [Smartphone mule]  --MQTT/Wi-Fi-->  [Broker MQTT]
+   capteurs                  app mobile                          stockage central
+   SQLite                    store & carry
+```
+
 ---
 
 ## Sommaire
@@ -16,46 +22,49 @@ Système de collecte de données environnementales sécurisé, fonctionnant selo
 4. [Guide de déploiement complet](#guide-de-déploiement-complet)
 5. [Application Raspberry Pi (`raspi_app`)](#application-raspberry-pi-raspi_app)
 6. [Application mobile (`mobile_app`)](#application-mobile-mobile_app)
-7. [Protocole BLE GATT](#protocole-ble-gatt)
-8. [Sécurité](#sécurité)
-9. [Tests](#tests)
-10. [Structure du projet](#structure-du-projet)
+7. [Configuration MQTT](#configuration-mqtt)
+8. [Protocole BLE GATT](#protocole-ble-gatt)
+9. [Sécurité](#sécurité)
+10. [Tests](#tests)
+11. [Dépannage](#dépannage)
+12. [Structure du projet](#structure-du-projet)
 
 ---
 
 ## Démarrage rapide (TL;DR)
 
-### Sentinelle Raspberry Pi — 2 commandes
+### Sentinelle Raspberry Pi
 
 ```bash
-git clone https://github.com/LouisLapointe01/iot-sentinelle.git && cd iot-sentinelle
+# 1. Cloner et installer
+git clone https://github.com/LouisLapointe01/iot-sentinelle.git
+cd iot-sentinelle
+bash bootstrap.sh --reel --id sentinelle-001
 
-# Tout automatique : venv + deps + clés + QR code
-bash bootstrap.sh
+# 2. Préparer le Bluetooth (une seule fois)
+sudo rfkill unblock bluetooth
+sudo bluetoothctl power on
+sudo bluetoothctl discoverable-timeout 0
+sudo bluetoothctl discoverable on
 
-# Lancer
-bash run.sh
+# 3. Lancer (avec sudo pour le serveur BLE GATT)
+cd raspi_app
+sudo .venv/bin/python main.py
 ```
 
-### Application mobile Android — APK prêt à l'emploi
+### Application mobile Android
 
-Télécharger directement depuis **[GitHub Releases](../../releases/latest)** → `app-debug.apk`
+Télécharger directement depuis **[GitHub Releases](../../releases/latest)** → `app-release.apk`
 
-> L'APK est recompilé automatiquement à chaque mise à jour du code (GitHub Actions).
+> L'APK est recompilé automatiquement à chaque mise à jour du code (GitHub Actions). Le bundle JavaScript est embarqué — **aucun PC ni Metro requis**.
 
 ---
 
 ## Vue d'ensemble
 
-Une **sentinelle** (Raspberry Pi) est déployée dans une zone sans connectivité Internet. Elle mesure en continu la qualité de l'air et les conditions météo, chiffre et signe chaque relevé, puis les stocke localement.
+Une **sentinelle** (Raspberry Pi) est déployée dans une zone sans connectivité Internet. Elle mesure en continu la qualité de l'air et les conditions météo, chiffre et signe chaque relevé, puis les stocke localement dans SQLite.
 
-Lorsqu'un agent (smartphone) passe à proximité, l'application **mule** se connecte à la sentinelle via BLE, récupère les données chiffrées, les acquitte, puis les transmet au serveur MQTT (neOCampus) dès qu'il retrouve du réseau.
-
-```
-[Sentinelle Pi]  --BLE-->  [Smartphone mule]  --MQTT/Wi-Fi-->  [Serveur neOCampus]
-   capteurs                  app mobile                          broker MQTT
-   SQLite                    store & carry                       stockage central
-```
+Lorsqu'un agent (smartphone) passe à proximité, l'application **mule** se connecte à la sentinelle via BLE GATT, récupère les bundles chiffrés, les acquitte, puis les transmet au broker MQTT dès qu'elle retrouve du réseau.
 
 ---
 
@@ -66,31 +75,21 @@ iot-sentinelle/
 ├── raspi_app/                  # Firmware Python – Raspberry Pi
 │   ├── main.py                 # Point d'entrée : boucle principale
 │   ├── config.py               # Toute la configuration (UUIDs, broches, intervalles…)
-│   ├── capteurs/
-│   │   ├── dht22.py            # Température + humidité (GPIO one-wire)
-│   │   ├── bme280.py           # Pression + temp + humidité (I2C)
-│   │   ├── pms5003.py          # Particules PM1.0/PM2.5/PM10 (UART)
-│   │   └── gestionnaire.py     # Orchestrateur des 3 capteurs
-│   ├── securite/
-│   │   ├── cles.py             # Génération/chargement des clés AES-256 et ECDSA P-256
-│   │   ├── chiffrement.py      # Chiffrement AES-256-CBC
-│   │   └── signature.py        # Signature ECDSA (SHA-256)
-│   ├── stockage/
-│   │   └── base_locale.py      # SQLite thread-safe (WAL + verrou)
-│   ├── communication/
-│   │   └── ble_serveur.py      # Serveur BLE GATT (BlueZ/D-Bus) + chunking
-│   ├── energie/
-│   │   └── gestionnaire.py     # Veille CPU, adaptation intervalle selon batterie
-│   ├── utils/
-│   │   └── qrcode_gen.py       # Génération du QR code de déploiement
-│   ├── tests/                  # 310 tests pytest (100 % de réussite)
+│   ├── capteurs/               # DHT22, BME280, PMS5003
+│   ├── securite/               # AES-256-CBC + ECDSA P-256
+│   ├── stockage/               # SQLite thread-safe (WAL + verrou)
+│   ├── communication/          # Serveur BLE GATT (BlueZ/D-Bus) + chunking
+│   ├── energie/                # Veille CPU, adaptation intervalle
+│   ├── utils/                  # Générateur de QR code
+│   ├── tests/                  # Suite complète pytest
 │   └── requirements.txt
 │
 └── mobile_app/                 # Application React Native / Expo
     ├── App.tsx                 # Application mule complète (5 phases)
+    ├── config.ts               # Configuration centralisée (MQTT, BLE, timeouts)
     ├── index.ts                # Point d'entrée + polyfill Buffer
     ├── app.json                # Config Expo + permissions BLE/caméra
-    ├── package.json            # Dépendances (ble-plx, mqtt, buffer…)
+    ├── package.json            # Dépendances
     └── __tests__/              # Tests Jest + snapshots
 ```
 
@@ -110,7 +109,7 @@ De la carte SD vierge à la sentinelle opérationnelle.
    - Hostname : `sentinelle`
    - Active **SSH**
    - Wi-Fi : ton réseau + mot de passe
-   - Utilisateur : `pi` / mot de passe au choix
+   - Utilisateur : `admin` / mot de passe au choix
 4. Flashe la carte SD, insère-la dans le Pi, branche l'alimentation
 
 ---
@@ -120,10 +119,19 @@ De la carte SD vierge à la sentinelle opérationnelle.
 Depuis ton PC (attends ~1 min que le Pi démarre) :
 
 ```bash
-ssh pi@sentinelle.local
+ssh admin@sentinelle.local
 ```
 
-> Si `sentinelle.local` ne répond pas, trouve l'IP dans l'interface de ton routeur et fais `ssh pi@192.168.x.x`.
+Si `sentinelle.local` ne répond pas, trouve l'IP dans ton routeur :
+
+```bash
+# Sur le Raspi
+hostname -I
+# Exemple : 192.168.1.56
+
+# Depuis le PC
+ssh admin@192.168.1.56
+```
 
 ---
 
@@ -137,7 +145,17 @@ cd iot-sentinelle
 
 ---
 
-### Étape 4 — Tout installer en une commande
+### Étape 4 — Installer les dépendances système BLE
+
+> **Critique :** ces paquets doivent être installés via `apt` **avant** de créer le venv.
+
+```bash
+sudo apt install -y python3-dbus python3-gi libglib2.0-dev bluetooth bluez
+```
+
+---
+
+### Étape 5 — Installer la sentinelle
 
 ```bash
 bash bootstrap.sh --reel --id sentinelle-001
@@ -145,94 +163,136 @@ bash bootstrap.sh --reel --id sentinelle-001
 
 Ce script fait **tout automatiquement** :
 - Vérifie Python 3.10+
-- Crée l'environnement virtuel (`raspi_app/.venv`)
-- Installe toutes les dépendances pip + dépendances système BLE
+- Crée le venv avec `--system-site-packages` (indispensable pour les libs BLE système)
+- Installe toutes les dépendances pip
 - Génère les clés AES-256 et ECDSA P-256
 - Génère le QR code de déploiement
-- Affiche un résumé de vérification
-
-**Options disponibles :**
 
 | Commande | Description |
 |----------|-------------|
 | `bash bootstrap.sh --reel` | Mode réel (Raspberry Pi + capteurs) |
 | `bash bootstrap.sh --id sentinelle-042` | Identifiant personnalisé |
-| `bash bootstrap.sh` | Mode simulation (PC, sans capteurs) |
+| `bash bootstrap.sh` | Mode simulation (sans capteurs) |
 | `bash bootstrap.sh --lancer` | Installer et lancer immédiatement |
 
 ---
 
-### Étape 5 — Activer Bluetooth et I2C
+### Étape 6 — Activer et configurer le Bluetooth
 
 ```bash
-# Bluetooth
-sudo systemctl enable bluetooth && sudo systemctl start bluetooth
+# Débloquer le Bluetooth (si bloqué par rfkill)
+sudo rfkill unblock bluetooth
 
-# I2C (pour le capteur BME280)
-sudo raspi-config
-# → Interface Options → I2C → Yes
+# Activer le service Bluetooth
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
+
+# Allumer et rendre découvrable en permanence
+sudo bluetoothctl power on
+sudo bluetoothctl discoverable-timeout 0
+sudo bluetoothctl discoverable on
+sudo bluetoothctl pairable on
 ```
 
-> Si tu n'as pas encore branché de capteurs physiques, passe cette étape — la sentinelle fonctionnera en mode simulation avec des données aléatoires.
+> Pour vérifier l'état : `sudo bluetoothctl show | grep -E "Powered|Discoverable"`
 
 ---
 
-### Étape 6 — Vérifier l'installation
+### Étape 7 — (Optionnel) Broker MQTT local pour tests à domicile
+
+Par défaut, la mule envoie les données au broker neOCampus (réseau université). Pour tester chez soi, installer Mosquitto sur le Raspi :
 
 ```bash
-bash run.sh --test
+sudo apt install -y mosquitto mosquitto-clients
+echo -e "listener 9001\nprotocol websockets\nallow_anonymous true" | sudo tee /etc/mosquitto/conf.d/local.conf
+sudo systemctl enable mosquitto
+sudo systemctl restart mosquitto
 ```
 
-Sortie attendue : `310 passed`
+Puis modifier `mobile_app/config.ts` :
+
+```ts
+export const MQTT_BROKER_WS = 'ws://192.168.1.XX:9001'; // IP du Raspi
+export const MQTT_USERNAME  = '';
+export const MQTT_PASSWORD  = '';
+```
+
+Pour vérifier que Mosquitto fonctionne :
+
+```bash
+# Terminal 1 — abonné
+mosquitto_sub -h localhost -p 1883 -t "TestTopic/#"
+
+# Terminal 2 — publier un message test
+mosquitto_pub -h localhost -p 1883 -t "TestTopic/test" -m "hello"
+```
 
 ---
 
-### Étape 7 — Lancer la sentinelle
+### Étape 8 — Lancer la sentinelle
 
 ```bash
-bash run.sh --reel --id sentinelle-001
+cd ~/iot-sentinelle/raspi_app
+source .venv/bin/activate
+
+# Lancer en arrière-plan (recommandé)
+sudo .venv/bin/python main.py > raspi.log 2>&1 &
+
+# Suivre les logs
+tail -f raspi.log
 ```
 
-Sortie attendue au démarrage :
+> **Important :** le serveur BLE GATT nécessite `sudo` pour accéder à BlueZ via D-Bus.
+
+Sortie attendue :
 
 ```
 [INFO] SENTINELLE DTN -- sentinelle-001
 [INFO] Firmware v1.0.0
-[INFO] Mode simulation : False
 [INFO] Boucle principale démarrée. Ctrl+C pour arrêter.
+[INFO] Adaptateur Bluetooth : /org/bluez/hci0
+[INFO] Application GATT enregistrée
+[INFO] Advertisement BLE : Sentinelle-sentinelle-001
 ```
 
-Arrêt propre : **Ctrl+C**
-
----
-
-### Étape 8 — Récupérer le QR code
-
-Le QR code est généré dans `raspi_app/donnees/`. Pour l'afficher dans le terminal :
+Pour arrêter proprement :
 
 ```bash
-cat raspi_app/donnees/qrcode_sentinelle.txt
+sudo pkill -f main.py
 ```
-
-Imprime-le ou colle-le sur le boîtier. L'application mobile Android le scannera pour se connecter en BLE.
 
 ---
 
-### Étape 9 — Installer l'application mobile Android
+### Étape 9 — Récupérer le QR code
+
+Le QR code est généré dans `raspi_app/` au format PNG. Pour le transférer sur ton PC :
+
+```bash
+# Depuis ton PC Windows
+scp admin@192.168.1.XX:~/iot-sentinelle/raspi_app/qrcode_test-sentinelle-001.png C:\Users\<toi>\Desktop\
+```
+
+Imprime-le ou colle-le sur le boîtier. L'application mobile le scannera pour se connecter en BLE.
+
+---
+
+### Étape 10 — Installer l'application mobile Android
 
 **Option A — APK prêt à l'emploi (recommandé) :**
 
 1. Aller sur **[GitHub Releases](https://github.com/LouisLapointe01/iot-sentinelle/releases/latest)**
-2. Télécharger `app-debug.apk`
+2. Télécharger `app-release.apk`
 3. L'installer sur Android (activer "Sources inconnues" si demandé)
+
+> Sur **GrapheneOS** : Paramètres → Applications → [navigateur] → Installer des apps inconnues → Autoriser
 
 **Option B — Compiler localement :**
 
 ```bash
 cd mobile_app
-npm install
-npm run apk
-# → android/app/build/outputs/apk/debug/app-debug.apk
+npm install       # Node.js 20+ requis
+npm run apk       # Build release avec JS embarqué
+# → android/app/build/outputs/apk/release/app-release.apk
 ```
 
 ---
@@ -240,49 +300,51 @@ npm run apk
 ### Récapitulatif des commandes
 
 ```bash
-# Sur le Raspberry Pi (SSH)
-bash bootstrap.sh --reel --id sentinelle-001   # Installation complète (une seule fois)
-bash run.sh --reel --id sentinelle-001         # Lancer la sentinelle
-bash run.sh --test                             # Vérifier les 310 tests
+# Installation (une seule fois)
+sudo apt install -y python3-dbus python3-gi libglib2.0-dev bluetooth bluez
+bash bootstrap.sh --reel --id sentinelle-001
 
-# Via Makefile
-make bootstrap    # = bash bootstrap.sh
-make run          # = bash run.sh
-make test         # Tests Python
+# Bluetooth (une seule fois, ou après redémarrage)
+sudo rfkill unblock bluetooth && sudo bluetoothctl power on
+sudo bluetoothctl discoverable-timeout 0 && sudo bluetoothctl discoverable on
+
+# Lancer la sentinelle
+cd raspi_app && sudo .venv/bin/python main.py > raspi.log 2>&1 &
+
+# Vérifier les logs
+tail -f ~/iot-sentinelle/raspi_app/raspi.log
+
+# Tests
+bash run.sh --test
 ```
 
 ---
 
 ## Application Raspberry Pi (`raspi_app`)
 
-### Prérequis et installation
+### Prérequis
 
-- Raspberry Pi 3, 4, 5 ou Zero W avec **Raspberry Pi OS** (Bullseye ou supérieur)
+- Raspberry Pi 3, 4, 5 ou Zero W avec **Raspberry Pi OS Bookworm** (64-bit recommandé)
 - Python 3.10+
-- Bluetooth activé (`sudo systemctl enable bluetooth`)
-- I2C activé (`sudo raspi-config` → Interface Options → I2C)
+- Bluetooth activé
+- I2C activé (`sudo raspi-config` → Interface Options → I2C) — pour le BME280
+
+### Installation manuelle (si bootstrap.sh non utilisé)
 
 ```bash
+# 1. Dépendances système BLE (obligatoire avant le venv)
+sudo apt install -y python3-dbus python3-gi libglib2.0-dev bluetooth bluez
+
+# 2. Venv avec accès aux paquets système
 cd raspi_app
-python -m venv .venv
+python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
+
+# 3. Dépendances pip
 pip install -r requirements.txt
 ```
 
-Pour les capteurs physiques, décommenter dans `requirements.txt` :
-
-```
-adafruit-circuitpython-dht>=4.0.0
-RPi.bme280>=0.2.4
-smbus2>=0.4.3
-pyserial>=3.5
-```
-
-Pour le serveur BLE (D-Bus/BlueZ), installer les dépendances système :
-
-```bash
-sudo apt-get install python3-dbus python3-gi libglib2.0-dev
-```
+> **Ne pas** créer le venv sans `--system-site-packages` — les libs `dbus` et `gi` installées via `apt` ne seraient pas accessibles et le serveur BLE tournerait en mode simulation.
 
 ### Configuration
 
@@ -290,8 +352,8 @@ Tous les paramètres sont centralisés dans `config.py` :
 
 | Paramètre | Défaut | Description |
 |-----------|--------|-------------|
-| `SENTINEL_ID` | `sentinelle-001` | Identifiant unique (surcharge via env `SENTINEL_ID`) |
-| `MODE_SIMULATION` | `true` | Données aléatoires si pas de capteurs physiques |
+| `SENTINEL_ID` | `sentinelle-001` | Identifiant unique (surcharge via `SENTINEL_ID=xxx`) |
+| `MODE_SIMULATION` | `true` | Données simulées si pas de capteurs physiques |
 | `INTERVALLE_MESURE_SECONDES` | `300` | Cycle de mesure (5 minutes) |
 | `DHT22_PIN` | `4` | Broche GPIO du DHT22 |
 | `BME280_I2C_ADDRESS` | `0x76` | Adresse I2C du BME280 |
@@ -302,20 +364,20 @@ Tous les paramètres sont centralisés dans `config.py` :
 ### Lancement
 
 ```bash
-# Mode simulation (sans capteurs physiques, pour développement)
-python main.py
+# Mode simulation (sans capteurs physiques)
+sudo .venv/bin/python main.py
 
 # Mode réel sur Raspberry Pi
-SENTINEL_SIMULATION=false python main.py
+sudo SENTINEL_SIMULATION=false .venv/bin/python main.py
 
 # Identifiant personnalisé
-SENTINEL_ID=sentinelle-042 SENTINEL_SIMULATION=false python main.py
+sudo SENTINEL_ID=sentinelle-042 SENTINEL_SIMULATION=false .venv/bin/python main.py
 
-# Générer le QR code à coller sur le boîtier (une seule fois au déploiement)
-python utils/qrcode_gen.py
+# Générer le QR code (une seule fois au déploiement)
+.venv/bin/python utils/qrcode_gen.py
 ```
 
-Le QR code généré (`qrcode_sentinelle-XXX.png`) contient :
+Le QR code contient :
 
 ```json
 {
@@ -330,44 +392,45 @@ Le QR code généré (`qrcode_sentinelle-XXX.png`) contient :
 
 ## Application mobile (`mobile_app`)
 
-### Prérequis et installation
+### Prérequis
 
-- Node.js 18+
-- Android Studio (pour le build Android) ou Xcode (pour iOS)
+- Android 8.0+ (testé sur GrapheneOS)
+- Bluetooth et Localisation activés
+- Permissions : Bluetooth, Caméra, Localisation (requises par Android pour scanner BLE)
+
+### Configuration (`config.ts`)
+
+Toutes les constantes sont centralisées dans `mobile_app/config.ts`. **Modifier ce fichier** pour changer les paramètres sans toucher à la logique de l'app :
+
+```ts
+// Broker MQTT — réseau université
+export const MQTT_BROKER_WS    = 'ws://neocampus.univ-tlse3.fr:9001';
+
+// Broker MQTT — tests à domicile (Mosquitto local sur le Raspi)
+// export const MQTT_BROKER_WS = 'ws://192.168.1.56:9001';
+
+export const MQTT_USERNAME     = 'test';
+export const MQTT_PASSWORD     = 'test';
+export const MQTT_TOPIC_PREFIX = 'TestTopic/lora/neOCampus';
+
+// Timeouts
+export const BLE_SCAN_TIMEOUT_MS     = 30_000;  // 30s pour trouver la sentinelle
+export const BLE_CHUNK_TIMEOUT_MS    = 10_000;  // 10s par chunk BLE
+export const MQTT_CONNECT_TIMEOUT_MS = 15_000;  // 15s pour le broker MQTT
+```
+
+### Build
+
+> **Important :** `react-native-ble-plx` contient du code natif — l'app **ne fonctionne pas dans Expo Go**.
 
 ```bash
 cd mobile_app
-npm install
-```
+npm install              # Node.js 20+ requis
 
-### Build (obligatoire)
-
-> **Important :** `react-native-ble-plx` contient du code natif.
-> L'application **ne fonctionne pas dans Expo Go** — un build natif est requis.
-
-```bash
-# Android (génère un APK de développement)
-npx expo run:android
-
-# iOS
-npx expo run:ios
-
-# APK de débogage autonome
-npm run apk
-# → android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Lancement
-
-```bash
-# Démarrer le serveur de développement
-npm start
-
-# Lancer les tests Jest
-npm test
-
-# Vérification TypeScript
-npm run typecheck
+npm run apk              # APK release (JS embarqué, autonome)
+npm run apk:debug        # APK debug (nécessite Metro)
+npm run typecheck        # Vérification TypeScript
+npm test                 # Tests Jest
 ```
 
 ### Flux de l'application (5 phases)
@@ -378,26 +441,35 @@ npm run typecheck
       Extrait : sentinel_id, ble_service_uuid, public_key
 
 2. [Connexion BLE]
-   └─ Scan BLE des périphériques annonçant l'UUID de service
-      Timeout 30 secondes
-      Connexion + découverte des services GATT
+   └─ Scan BLE des périphériques annonçant l'UUID de service (timeout 30s)
+      Connexion GATT + découverte des services
 
 3. [Téléchargement]
    └─ Lecture BUNDLE_COUNT → nombre de bundles à récupérer
       Pour chaque bundle :
         ① Écrire l'index dans BUNDLE_SELECT
-        ② Lire BUNDLE_DATA en boucle (protocole chunké)
+        ② Lire BUNDLE_DATA en boucle (protocole chunké, timeout 10s/chunk)
         ③ Écrire le bundle_id dans BUNDLE_ACK
+      Barre de progression visuelle (%)
 
 4. [Transmission MQTT]
-   └─ Connexion WebSocket au broker neOCampus
-      Publication sur TestTopic/lora/neOCampus/<sentinel_id>
-      QoS 1 (at least once), timeout 15 secondes
+   └─ Connexion WebSocket au broker MQTT (timeout 15s)
+      Publication sur TestTopic/lora/neOCampus/<sentinel_id> (QoS 1)
 
 5. [Résultats]
-   └─ Affiche : bundles récupérés, envois réussis/échoués
-      Bouton "Nouvelle session" pour recommencer
+   └─ Bundles récupérés / envois réussis / échecs
+      Bouton "Nouvelle session"
 ```
+
+---
+
+## Configuration MQTT
+
+| Environnement | Broker | Port | Notes |
+|---------------|--------|------|-------|
+| Université (neOCampus) | `neocampus.univ-tlse3.fr` | `9001` (WS) | Réseau campus ou VPN requis |
+| Domicile (Mosquitto local) | IP du Raspi (`192.168.1.XX`) | `9001` (WS) | Installer Mosquitto sur le Raspi |
+| Public (test) | `broker.hivemq.com` | `8000` (WS) | Sans authentification |
 
 ---
 
@@ -418,27 +490,15 @@ Préfixe commun des UUID : `12345678-1234-5678-1234-56789`
 
 ### Protocole de chunking
 
-Les bundles chiffrés font typiquement **1 600–1 800 octets** (données AES-256 en base64 + signature ECDSA + métadonnées), soit bien au-delà de la limite BLE de 512 octets par caractéristique.
+Les bundles font ~1 600–1 800 octets, au-delà de la limite BLE de 512 octets. Le chunking résout cela :
 
-Le protocole de chunking résout cela :
-
-**Côté sentinelle (`ble_serveur.py`) :**
-1. À réception de `BUNDLE_SELECT = "N"`, le bundle N est découpé en tranches de 400 octets.
-2. Chaque lecture de `BUNDLE_DATA` retourne la tranche suivante, enveloppée en JSON :
-
-```json
-{ "total": 4, "chunk": 0, "data": "<400 caractères du JSON du bundle>" }
 ```
-
-**Côté mule (`App.tsx`) :**
-```
-WRITE  BUNDLE_SELECT = "0"          ← sélectionner le bundle 0
-READ   BUNDLE_DATA → {total:4, chunk:0, data:"..."}
-READ   BUNDLE_DATA → {total:4, chunk:1, data:"..."}
-READ   BUNDLE_DATA → {total:4, chunk:2, data:"..."}
-READ   BUNDLE_DATA → {total:4, chunk:3, data:"..."}  ← dernier (chunk == total-1)
-                                                       → reconstituer le JSON complet
-WRITE  BUNDLE_ACK = "<bundle_id>"   ← acquittement
+WRITE  BUNDLE_SELECT = "0"
+READ   BUNDLE_DATA → {"total":4, "chunk":0, "data":"..."}
+READ   BUNDLE_DATA → {"total":4, "chunk":1, "data":"..."}
+READ   BUNDLE_DATA → {"total":4, "chunk":2, "data":"..."}
+READ   BUNDLE_DATA → {"total":4, "chunk":3, "data":"..."}  ← reconstituer le JSON
+WRITE  BUNDLE_ACK  = "<bundle_id>"
 ```
 
 ---
@@ -447,28 +507,19 @@ WRITE  BUNDLE_ACK = "<bundle_id>"   ← acquittement
 
 ### Chiffrement AES-256-CBC
 
-Chaque cycle de mesures est chiffré **dès l'acquisition** avec une clé AES-256 partagée entre la sentinelle et le serveur :
-
 - IV aléatoire de 16 octets généré pour chaque chiffrement
 - Padding PKCS7
-- Les données claires ne transitent jamais en clair hors de la mémoire de la sentinelle
+- Les données claires ne transitent jamais hors de la mémoire de la sentinelle
 
 ### Signature ECDSA P-256
-
-Chaque bundle est signé avec la clé privée ECDSA de la sentinelle :
 
 - Bloc signé : `IV || données_chiffrées`
 - Algorithme : DSS FIPS 186-3, courbe NIST P-256 (secp256r1)
 - La clé publique est diffusée via le QR code et la caractéristique `PUBLIC_KEY`
-- La mule (ou le serveur) peut vérifier l'intégrité sans connaître la clé AES
 
 ### Anti-rejeu
 
-Chaque bundle contient un nonce de 16 octets générés aléatoirement (`/dev/urandom`), permettant au serveur de détecter les doublons.
-
-### Thread-safety
-
-Le stockage SQLite utilise un `threading.Lock` pour sérialiser les accès entre le thread principal (écriture des bundles) et le thread BLE (lecture + acquittement).
+Chaque bundle contient un nonce de 16 octets aléatoires (`/dev/urandom`) pour détecter les doublons côté serveur.
 
 ---
 
@@ -478,35 +529,92 @@ Le stockage SQLite utilise un `threading.Lock` pour sérialiser les accès entre
 
 ```bash
 cd raspi_app
+source .venv/bin/activate
 python -m pytest tests/ -v
+# ou
+bash run.sh --test
 ```
-
-**310 tests — 100 % de réussite.**
 
 | Fichier | Tests | Couverture |
 |---------|-------|-----------|
-| `test_capteurs.py` | 29 | DHT22, BME280, PMS5003, décodage trame UART |
-| `test_securite.py` | 30 | Clés AES/ECDSA, chiffrement, signature, cas limites |
-| `test_stockage.py` | 13 | SQLite CRUD, FIFO, ACK, double ACK, nettoyage |
-| `test_ble_chunking.py` | 27 | Chunking BLE, reconstitution JSON, limites 512 octets |
-| `test_energie.py` | 18 | Intervalles batterie, veille, gestion erreurs système |
-| `test_config.py` | 37 | UUIDs (cohérence Python↔TypeScript), types, valeurs |
-| `test_qrcode.py` | 11 | Génération QR, contenu JSON, fallback MAC BLE |
-| `test_integration.py` | 20 | Pipeline DTN bout-en-bout + test de concurrence |
-| `test_installer.py` | 36 | Installation automatique, CLI, vérification d'état |
-| `test_setup_integration.py` | 31 | Setup depuis zéro, idempotence, variables d'env, CLI |
-| `test_main_loop.py` | 23 | Boucle principale mockée, signaux, cycles, arrêt propre |
-| `test_fonctionnement_global.py` | 35 | Pipeline DTN complet, BLE bout en bout, concurrence |
+| `test_capteurs.py` | 29 | DHT22, BME280, PMS5003 |
+| `test_securite.py` | 30 | Clés AES/ECDSA, chiffrement, signature |
+| `test_stockage.py` | 13 | SQLite CRUD, FIFO, ACK |
+| `test_ble_chunking.py` | 27 | Chunking BLE, reconstitution JSON |
+| `test_energie.py` | 18 | Intervalles batterie, veille |
+| `test_config.py` | 37 | UUIDs (cohérence Python↔TypeScript), types |
+| `test_qrcode.py` | 11 | Génération QR, contenu JSON |
+| `test_integration.py` | 20 | Pipeline DTN bout-en-bout |
+| `test_installer.py` | 36 | Installation automatique |
+| `test_setup_integration.py` | 31 | Setup depuis zéro, idempotence |
+| `test_main_loop.py` | 23 | Boucle principale, signaux, arrêt propre |
+| `test_fonctionnement_global.py` | 35 | Pipeline DTN complet, BLE, concurrence |
+| `test_scenario_complet.py` | — | Scénario DTN bout-en-bout sans hardware |
 
-Le test `test_uuids_coherents_avec_app_tsx` détecte automatiquement toute désynchronisation entre les UUIDs de `config.py` et ceux de `App.tsx`.
+> Le test `test_uuids_coherents_avec_app_tsx` vérifie automatiquement la synchronisation des UUIDs entre `config.py` et `config.ts`.
 
 ### Application mobile (`mobile_app`)
 
 ```bash
 cd mobile_app
-npm test                    # Tous les tests
-npm test -- --watch         # Mode interactif
+npm test                     # Tous les tests Jest
+npm test -- --watch          # Mode interactif
 npm test -- --updateSnapshot # Mettre à jour les snapshots
+```
+
+---
+
+## Dépannage
+
+### "Unable to load script" au démarrage de l'app
+
+L'APK installé est une ancienne version qui nécessite Metro. **Solution :** télécharger et réinstaller `app-release.apk` depuis [GitHub Releases](../../releases/latest).
+
+### "Aucune sentinelle trouvée en 30s"
+
+1. Vérifier que `main.py` tourne sur le Raspi : `ps aux | grep main.py`
+2. Vérifier que le Bluetooth est actif : `sudo bluetoothctl show | grep Powered`
+3. Si `Powered: no` → `sudo rfkill unblock bluetooth && sudo bluetoothctl power on`
+4. Vérifier que l'app a les permissions **Bluetooth + Localisation** sur Android
+5. S'assurer que `main.py` est lancé avec `sudo`
+
+### "Erreur connexion : operation was cancelled"
+
+1. Le serveur BLE tourne-t-il avec `sudo` ? (requis pour D-Bus/BlueZ)
+2. Redémarrer bluetoothd : `sudo systemctl restart bluetooth`
+3. Relancer `main.py` après le redémarrage bluetooth
+
+### Le serveur BLE tourne en mode simulation
+
+```
+[INFO] ServeurBLE : démarrage ignoré (mode simulation)
+```
+
+Cause : les libs `dbus`/`gi` ne sont pas accessibles depuis le venv.
+
+**Solution :** recréer le venv avec `--system-site-packages` :
+
+```bash
+deactivate
+rm -rf .venv
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Timeout MQTT — bundles non transmis
+
+- **Sur réseau université :** connecter le téléphone au Wi-Fi campus ou via VPN
+- **À domicile :** installer Mosquitto sur le Raspi (voir [Étape 7](#étape-7--optionnel-broker-mqtt-local-pour-tests-à-domicile))
+
+### `pip` / `pip3` introuvable
+
+```bash
+sudo apt install -y python3-pip
+# ou via venv :
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ---
@@ -514,28 +622,41 @@ npm test -- --updateSnapshot # Mettre à jour les snapshots
 ## Structure du projet
 
 ```
-raspi_app/
-├── main.py              ← Boucle principale DTN
-├── config.py            ← Configuration centralisée
-├── capteurs/            ← Acquisition des données
-├── securite/            ← Cryptographie (AES + ECDSA)
-├── stockage/            ← Persistance SQLite thread-safe
-├── communication/       ← Serveur BLE GATT + chunking
-├── energie/             ← Gestion batterie et veille CPU
-├── utils/               ← Générateur de QR code
-├── tests/               ← Banc de tests complet
-└── requirements.txt
-
-mobile_app/
-├── App.tsx              ← Application mule (5 phases)
-├── index.ts             ← Polyfill Buffer
-├── app.json             ← Config Expo + permissions BLE/caméra
-├── package.json         ← Dépendances
-└── __tests__/           ← Tests Jest
+iot-sentinelle/
+├── .github/workflows/
+│   └── build-apk.yml        ← CI : build APK release à chaque push sur main
+├── raspi_app/
+│   ├── main.py              ← Boucle principale DTN
+│   ├── config.py            ← Configuration centralisée
+│   ├── capteurs/            ← Acquisition des données
+│   ├── securite/            ← Cryptographie (AES + ECDSA)
+│   ├── stockage/            ← Persistance SQLite thread-safe
+│   ├── communication/       ← Serveur BLE GATT + chunking
+│   ├── energie/             ← Gestion batterie et veille CPU
+│   ├── utils/               ← Générateur de QR code
+│   ├── tests/               ← Banc de tests complet
+│   └── requirements.txt
+├── mobile_app/
+│   ├── App.tsx              ← Application mule (5 phases)
+│   ├── config.ts            ← Configuration centralisée (MQTT, BLE, timeouts)
+│   ├── index.ts             ← Polyfill Buffer
+│   ├── app.json             ← Config Expo + permissions BLE/caméra
+│   ├── package.json         ← Dépendances (Node.js 20+ requis)
+│   └── __tests__/           ← Tests Jest
+├── bootstrap.sh             ← Installation complète en une commande
+├── run.sh                   ← Lancer la sentinelle ou les tests
+└── Makefile                 ← Alias make bootstrap / make run / make test
 ```
 
 ---
 
-**Auteur :** Louis Lapointe — 2026
-*Développé dans le cadre d'un projet IoT sécurisé.*
+## Contributeurs
 
+| Nom | Rôle |
+|-----|------|
+| Thomas Collet | Développement |
+| Louis Lapointe | Développement |
+| Oussama Guelagli | Développement |
+| Bastien Cabanie | Développement |
+
+*Développé dans le cadre d'un projet IoT sécurisé — 2026.*

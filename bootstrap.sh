@@ -108,8 +108,8 @@ VENV_DIR="$RASPI_DIR/.venv"
 if [ -d "$VENV_DIR" ]; then
     ok "Environnement virtuel existant réutilisé"
 else
-    info "Création de l'environnement virtuel..."
-    $PYTHON_CMD -m venv "$VENV_DIR"
+    info "Création de l'environnement virtuel (--system-site-packages pour BLE)..."
+    $PYTHON_CMD -m venv "$VENV_DIR" --system-site-packages
     ok "Environnement virtuel créé dans raspi_app/.venv"
 fi
 
