@@ -26,29 +26,26 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { BleManager, Device } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import mqtt from 'mqtt';
-
-// =============================================================================
-// CONSTANTES -- doivent correspondre exactement a raspi_app/config.py
-// =============================================================================
-
-// UUIDs BLE (sync avec config.BLE_CHAR_*_UUID)
-const BLE_CHAR_BUNDLE_DATA_UUID   = '12345678-1234-5678-1234-56789abcdef1';
-const BLE_CHAR_BUNDLE_ACK_UUID    = '12345678-1234-5678-1234-56789abcdef4';
-const BLE_CHAR_BUNDLE_COUNT_UUID  = '12345678-1234-5678-1234-56789abcdef5';
-const BLE_CHAR_BUNDLE_SELECT_UUID = '12345678-1234-5678-1234-56789abcdef6';
-
-// MQTT (sync avec config.MQTT_*)
-// Note : la mule se connecte via WebSocket car c'est le seul transport
-// disponible en React Native sans module natif MQTT.
-// Le broker neOCampus doit exposer MQTT-over-WebSocket sur ce port.
-const MQTT_BROKER_WS    = 'ws://neocampus.univ-tlse3.fr:9001';
-const MQTT_USERNAME     = 'test';
-const MQTT_PASSWORD     = 'test';
-const MQTT_TOPIC_PREFIX = 'TestTopic/lora/neOCampus';
+import {
+  BLE_CHAR_BUNDLE_DATA_UUID,
+  BLE_CHAR_BUNDLE_ACK_UUID,
+  BLE_CHAR_BUNDLE_COUNT_UUID,
+  BLE_CHAR_BUNDLE_SELECT_UUID,
+  MQTT_BROKER_WS,
+  MQTT_USERNAME,
+  MQTT_PASSWORD,
+  MQTT_TOPIC_PREFIX,
+  BLE_SCAN_TIMEOUT_MS,
+  BLE_CHUNK_TIMEOUT_MS,
+  MQTT_CONNECT_TIMEOUT_MS,
+  DEMO_NB_BUNDLES,
+  DEMO_SENTINEL_ID,
+} from './config';
 
 // =============================================================================
 // TYPES
 // =============================================================================
+// (Constantes de configuration deplacees dans config.ts)
 
 type Phase =
   | 'scanner'     // Attente du scan QR
@@ -102,9 +99,6 @@ interface ChunkEnvelope {
 // =============================================================================
 // COMPOSANT PRINCIPAL
 // =============================================================================
-
-// Demo scenario constants
-const DEMO_NB_BUNDLES = 12; // 1h = 12 cycles x 5 min
 
 // Instance BleManager globale (une seule par application)
 const bleManager = new BleManager();
@@ -180,13 +174,18 @@ export default function App() {
     // 1. Selectionner le bundle par index (le serveur prepare ses chunks)
     await writeChar(device, serviceUuid, BLE_CHAR_BUNDLE_SELECT_UUID, String(index));
 
-    // 2. Lire tous les chunks
+    // 2. Lire tous les chunks avec timeout par chunk pour eviter un blocage infini
     let fullJson = '';
     let totalChunks = 1;
     let chunksReceived = 0;
 
     do {
-      const raw = await readChar(device, serviceUuid, BLE_CHAR_BUNDLE_DATA_UUID);
+      const raw = await Promise.race([
+        readChar(device, serviceUuid, BLE_CHAR_BUNDLE_DATA_UUID),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout lecture chunk BLE')), BLE_CHUNK_TIMEOUT_MS),
+        ),
+      ]);
       const envelope: ChunkEnvelope = JSON.parse(raw);
       fullJson += envelope.data;
       totalChunks = envelope.total;
@@ -230,14 +229,16 @@ export default function App() {
   // ---------------------------------------------------------------------------
 
   const startBLEConnection = (config: SentinelConfig) => {
-    // Timeout : si la sentinelle n'est pas trouvee dans les 30 secondes, on abandonne.
+    // Timeout : si la sentinelle n'est pas trouvee, on abandonne.
     const scanTimeout = setTimeout(() => {
       bleManager.stopDeviceScan();
-      setStatusMsg('Aucune sentinelle trouvee dans les 30 secondes. Verifiez que le Bluetooth est actif et que la sentinelle est a portee.');
+      setStatusMsg(
+        `Aucune sentinelle trouvee en ${BLE_SCAN_TIMEOUT_MS / 1000}s. ` +
+        'Verifiez que le Bluetooth est actif et que la sentinelle est a portee.',
+      );
       setPhase('error');
-    }, 30_000);
+    }, BLE_SCAN_TIMEOUT_MS);
 
-    // Ici, on scanne les peripheriques BLE qui annoncent notre UUID de service.
     bleManager.startDeviceScan([config.ble_service_uuid], null, async (error, device) => {
       if (error) {
         clearTimeout(scanTimeout);
@@ -255,6 +256,14 @@ export default function App() {
         const connected = await device.connect();
         await connected.discoverAllServicesAndCharacteristics();
         deviceRef.current = connected;
+
+        // Detecter une deconnexion inattendue pendant le transfert.
+        connected.onDisconnected((err) => {
+          if (err) {
+            setStatusMsg(`Connexion BLE perdue : ${err.message}`);
+            setPhase('error');
+          }
+        });
 
         setPhase('downloading');
         await runDownloadPhase(connected, config.ble_service_uuid);
@@ -325,7 +334,7 @@ export default function App() {
       const client = mqtt.connect(MQTT_BROKER_WS, {
         username: MQTT_USERNAME,
         password: MQTT_PASSWORD,
-        connectTimeout: 10_000,
+        connectTimeout: MQTT_CONNECT_TIMEOUT_MS,
         reconnectPeriod: 0, // Pas de reconnexion automatique
       });
 
@@ -338,10 +347,10 @@ export default function App() {
 
       // Timeout si le broker est injoignable
       const timeout = setTimeout(() => {
-        setStatusMsg('Timeout MQTT — bundles non transmis au serveur.');
+        setStatusMsg(`Timeout MQTT (${MQTT_CONNECT_TIMEOUT_MS / 1000}s) — bundles non transmis.`);
         ko = bundlesToSend.length;
         finish();
-      }, 15_000);
+      }, MQTT_CONNECT_TIMEOUT_MS);
 
       client.on('connect', async () => {
         clearTimeout(timeout);
@@ -380,8 +389,6 @@ export default function App() {
   // ---------------------------------------------------------------------------
   // DEMONSTRATION A-Z (donnees simulees, aucun hardware requis)
   // ---------------------------------------------------------------------------
-
-  const DEMO_SENTINEL_ID = 'sentinelle-demo-042';
 
   const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
 
@@ -743,15 +750,25 @@ export default function App() {
       uploading:   'Transmission MQTT...',
     }[phase];
 
+    const progressPct =
+      phase === 'downloading' && progress.total > 0
+        ? Math.round((progress.current / progress.total) * 100)
+        : null;
+
     return (
       <SafeAreaView style={styles.container}>
         <Text style={styles.title}>{label}</Text>
         <ActivityIndicator size="large" color="#007AFF" style={styles.spinner} />
         <Text style={styles.body}>{statusMsg}</Text>
-        {phase === 'downloading' && progress.total > 0 && (
-          <Text style={styles.caption}>
-            {progress.current} / {progress.total} bundles
-          </Text>
+        {progressPct !== null && (
+          <>
+            <View style={styles.progressBar}>
+              <View style={[styles.progressFill, { width: `${progressPct}%` as any }]} />
+            </View>
+            <Text style={styles.caption}>
+              {progress.current} / {progress.total} bundles ({progressPct}%)
+            </Text>
+          </>
         )}
         {sentinelConfig && (
           <Text style={styles.caption}>{sentinelConfig.sentinel_id}</Text>
@@ -868,6 +885,19 @@ const styles = StyleSheet.create({
     color: '#333',
     marginVertical: 3,
     textAlign: 'center',
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#dde3ea',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginTop: 12,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 4,
   },
   btn: {
     marginTop: 16,
