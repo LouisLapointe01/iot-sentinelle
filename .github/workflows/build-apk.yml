@@ -42,11 +42,22 @@ jobs:
           cd mobile_app
           npx expo prebuild --platform android --no-install
 
-      - name: Build APK (JS bundlé, autonome sans Metro)
+      - name: Bundle le JS dans les assets Android
+        run: |
+          cd mobile_app
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.ts \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
+      - name: Build APK
         run: |
           cd mobile_app/android
           chmod +x gradlew
-          ./gradlew assembleDebug -PbundleInDebug=true --no-daemon
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK comme artefact
         uses: actions/upload-artifact@v4
