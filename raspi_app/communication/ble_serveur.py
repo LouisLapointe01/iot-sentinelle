@@ -386,12 +386,12 @@ class CaracBundleAck(Caracteristique):
 
 
 class CaracBundleCount(Caracteristique):
-    """Ici, retourne le nombre de bundles en attente (Read/Notify)."""
+    """Ici, retourne le nombre de bundles en attente (Read uniquement)."""
 
     def __init__(self, bus, index, service, base_locale):
         super().__init__(
             bus, index, config.BLE_CHAR_BUNDLE_COUNT_UUID,
-            ["read", "notify"], service,
+            ["read"], service,
         )
         self.base_locale = base_locale
 
