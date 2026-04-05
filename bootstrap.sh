@@ -6,22 +6,21 @@
 #   bash bootstrap.sh              # Mode simulation (PC sans capteurs)
 #   bash bootstrap.sh --reel       # Mode reel (Raspberry Pi avec capteurs)
 #   bash bootstrap.sh --id XYZ     # ID personnalise (ex: sentinelle-042)
-#   bash bootstrap.sh --lancer     # Installer ET lancer immédiatement
+#   bash bootstrap.sh --lancer     # Installer ET lancer immediatement
 #
 # Ce script fait tout :
-#   1. Vérifie Python 3.10+
-#   2. Crée l'environnement virtuel
-#   3. Installe toutes les dépendances
-#   4. Génère les clés AES-256 et ECDSA P-256
-#   5. Génère le QR code
-#   6. Affiche un résumé et les commandes pour démarrer
+#   1. Verifie Python 3.10+
+#   2. Installe les dependances systeme BLE (apt)
+#   3. Configure et active le Bluetooth
+#   4. Cree l'environnement virtuel (--system-site-packages pour BLE)
+#   5. Installe les dependances pip
+#   6. Genere les cles AES-256 et ECDSA P-256
+#   7. Genere le QR code
+#   8. Affiche les commandes pour demarrer
 # =============================================================================
 
 set -e
 
-# ---------------------------------------------------------------------------
-# Couleurs terminal
-# ---------------------------------------------------------------------------
 ROUGE='\033[0;31m'
 VERT='\033[0;32m'
 JAUNE='\033[1;33m'
@@ -30,7 +29,8 @@ GRAS='\033[1m'
 RESET='\033[0m'
 
 ok()   { echo -e "  ${VERT}[OK]${RESET} $1"; }
-err()  { echo -e "  ${ROUGE}[ERREUR]${RESET} $1"; }
+err()  { echo -e "  ${ROUGE}[ERREUR]${RESET} $1"; exit 1; }
+warn() { echo -e "  ${JAUNE}[WARN]${RESET} $1"; }
 info() { echo -e "  ${BLEU}[INFO]${RESET} $1"; }
 step() { echo -e "\n${GRAS}$1${RESET}"; }
 
@@ -50,32 +50,31 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: bash bootstrap.sh [--reel] [--id <sentinel_id>] [--lancer]"
             exit 0 ;;
         *)
-            err "Option inconnue : $1"
-            echo "Utiliser --help pour l'aide"
-            exit 1 ;;
+            warn "Option inconnue : $1"
+            shift ;;
     esac
 done
 
 # ---------------------------------------------------------------------------
-# Bannière
+# Banniere
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${GRAS}=========================================${RESET}"
-echo -e "${GRAS}   IoT-Sentinelle -- Installation auto${RESET}"
+echo -e "${GRAS}   IoT-Sentinelle -- Installation auto  ${RESET}"
 echo -e "${GRAS}=========================================${RESET}"
 echo ""
 info "Sentinel ID : ${SENTINEL_ID}"
-if $MODE_REEL; then
-    info "Mode : Réel (Raspberry Pi)"
-else
-    info "Mode : Simulation (PC)"
-fi
+$MODE_REEL && info "Mode : Reel (Raspberry Pi)" || info "Mode : Simulation (PC)"
 echo ""
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RASPI_DIR="$SCRIPT_DIR/raspi_app"
+VENV_DIR="$RASPI_DIR/.venv"
+
 # ---------------------------------------------------------------------------
-# Étape 1 : Python 3.10+
+# Etape 1 : Python 3.10+
 # ---------------------------------------------------------------------------
-step "Étape 1/5 : Vérification Python"
+step "Etape 1/6 : Verification Python"
 
 PYTHON_CMD=""
 for cmd in python3 python python3.12 python3.11 python3.10; do
@@ -85,35 +84,73 @@ for cmd in python3 python python3.12 python3.11 python3.10; do
         MINOR=$(echo "$VERSION" | cut -d. -f2)
         if [ "$MAJOR" -ge 3 ] && [ "$MINOR" -ge 10 ]; then
             PYTHON_CMD="$cmd"
-            ok "Python $VERSION trouvé ($cmd)"
+            ok "Python $VERSION trouve ($cmd)"
             break
         fi
     fi
 done
 
-if [ -z "$PYTHON_CMD" ]; then
-    err "Python 3.10+ requis. Installer depuis https://python.org"
-    exit 1
+[ -z "$PYTHON_CMD" ] && err "Python 3.10+ requis. Installer depuis https://python.org"
+
+# ---------------------------------------------------------------------------
+# Etape 2 : Dependances systeme BLE (Raspberry Pi uniquement)
+# ---------------------------------------------------------------------------
+step "Etape 2/6 : Dependances systeme"
+
+if command -v apt-get &>/dev/null; then
+    info "Installation des paquets systeme BLE..."
+    sudo apt-get update -qq
+    sudo apt-get install -y python3-dbus python3-gi libglib2.0-dev bluetooth bluez -qq
+    ok "Paquets systeme installes (python3-dbus, python3-gi, bluetooth, bluez)"
+else
+    warn "apt-get non disponible -- paquets BLE systeme non installes (normal sur PC)"
 fi
 
 # ---------------------------------------------------------------------------
-# Étape 2 : Environnement virtuel
+# Etape 3 : Configuration Bluetooth
 # ---------------------------------------------------------------------------
-step "Étape 2/5 : Environnement virtuel"
+step "Etape 3/6 : Configuration Bluetooth"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RASPI_DIR="$SCRIPT_DIR/raspi_app"
-VENV_DIR="$RASPI_DIR/.venv"
+if command -v bluetoothctl &>/dev/null; then
+    # Debloquer rfkill si necessaire
+    if command -v rfkill &>/dev/null; then
+        sudo rfkill unblock bluetooth 2>/dev/null && ok "rfkill : Bluetooth debloque" || true
+    fi
+
+    # Activer et demarrer le service
+    sudo systemctl enable bluetooth 2>/dev/null || true
+    sudo systemctl start bluetooth 2>/dev/null || true
+
+    # Configurer l'adaptateur
+    sleep 1
+    sudo bluetoothctl power on 2>/dev/null || true
+    sudo bluetoothctl discoverable-timeout 0 2>/dev/null || true
+    sudo bluetoothctl discoverable on 2>/dev/null || true
+    sudo bluetoothctl pairable on 2>/dev/null || true
+
+    POWERED=$(sudo bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}')
+    if [ "$POWERED" = "yes" ]; then
+        ok "Bluetooth actif et decouvrabe"
+    else
+        warn "Bluetooth non disponible sur ce systeme"
+    fi
+else
+    warn "bluetoothctl non disponible -- configuration Bluetooth ignoree"
+fi
+
+# ---------------------------------------------------------------------------
+# Etape 4 : Environnement virtuel
+# ---------------------------------------------------------------------------
+step "Etape 4/6 : Environnement virtuel"
 
 if [ -d "$VENV_DIR" ]; then
-    ok "Environnement virtuel existant réutilisé"
+    ok "Environnement virtuel existant reutilise"
 else
-    info "Création de l'environnement virtuel (--system-site-packages pour BLE)..."
+    info "Creation du venv avec --system-site-packages (requis pour BLE)..."
     $PYTHON_CMD -m venv "$VENV_DIR" --system-site-packages
-    ok "Environnement virtuel créé dans raspi_app/.venv"
+    ok "Environnement virtuel cree dans raspi_app/.venv"
 fi
 
-# Activer le venv
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
     ACTIVATE="$VENV_DIR/Scripts/activate"
 else
@@ -121,49 +158,40 @@ else
 fi
 
 source "$ACTIVATE"
-ok "Environnement virtuel activé"
+ok "Environnement virtuel active"
 
 # ---------------------------------------------------------------------------
-# Étape 3 : Dépendances pip
+# Etape 5 : Dependances pip
 # ---------------------------------------------------------------------------
-step "Étape 3/5 : Installation des dépendances"
+step "Etape 5/6 : Installation des dependances pip"
 
-info "Installation de pycryptodome, qrcode..."
 pip install -r "$RASPI_DIR/requirements.txt" -q
-ok "Dépendances installées"
+ok "Dependances pip installees (pycryptodome, qrcode...)"
 
-# Sur Raspberry Pi réel : installer les dépendances système BLE
-if $MODE_REEL; then
-    info "Mode réel : vérification des dépendances BLE système..."
-    if command -v apt-get &>/dev/null; then
-        info "Installation des paquets système BLE (sudo requis)..."
-        sudo apt-get install -y python3-dbus python3-gi libglib2.0-dev 2>/dev/null \
-            && ok "Dépendances BLE système installées" \
-            || info "Installer manuellement : sudo apt-get install python3-dbus python3-gi libglib2.0-dev"
-    fi
+# Verifier que dbus est accessible depuis le venv
+if $PYTHON_CMD -c "import dbus" 2>/dev/null; then
+    ok "dbus accessible depuis le venv (BLE fonctionnel)"
+else
+    warn "dbus non accessible -- le serveur BLE tournera en mode simulation"
+    warn "Solution : sudo apt install python3-dbus python3-gi && recreer le venv"
 fi
 
 # ---------------------------------------------------------------------------
-# Étape 4 : Clés cryptographiques + QR code
+# Etape 6 : Cles cryptographiques + QR code
 # ---------------------------------------------------------------------------
-step "Étape 4/5 : Génération des clés et QR code"
+step "Etape 6/6 : Generation des cles et QR code"
 
 cd "$RASPI_DIR"
-SENTINEL_ID="$SENTINEL_ID" python installer.py --no-deps
+SENTINEL_ID="$SENTINEL_ID" $PYTHON_CMD installer.py --no-deps
+ok "Cles AES-256 et ECDSA P-256 generees"
+ok "QR code genere : raspi_app/qrcode_${SENTINEL_ID}.png"
 
 # ---------------------------------------------------------------------------
-# Étape 5 : Vérification finale
-# ---------------------------------------------------------------------------
-step "Étape 5/5 : Vérification du système"
-
-SENTINEL_ID="$SENTINEL_ID" python installer.py --check
-
-# ---------------------------------------------------------------------------
-# Résumé
+# Resume
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${GRAS}=========================================${RESET}"
-echo -e "${VERT}${GRAS}   Installation terminée avec succès !${RESET}"
+echo -e "${VERT}${GRAS}   Installation terminee avec succes !  ${RESET}"
 echo -e "${GRAS}=========================================${RESET}"
 echo ""
 echo -e "  Pour lancer la sentinelle :"
@@ -177,16 +205,14 @@ echo ""
 echo -e "  Pour lancer les tests :"
 echo -e "    ${GRAS}bash run.sh --test${RESET}"
 echo ""
+echo -e "  QR code a coller sur le boitier :"
+echo -e "    ${GRAS}raspi_app/qrcode_${SENTINEL_ID}.png${RESET}"
+echo ""
 
 # ---------------------------------------------------------------------------
-# Lancement automatique si demandé
+# Lancement automatique si demande
 # ---------------------------------------------------------------------------
 if $LANCER; then
-    echo ""
     info "Lancement de la sentinelle..."
-    if $MODE_REEL; then
-        SENTINEL_ID="$SENTINEL_ID" SENTINEL_SIMULATION=false python main.py
-    else
-        SENTINEL_ID="$SENTINEL_ID" python main.py
-    fi
+    bash "$SCRIPT_DIR/run.sh" $($MODE_REEL && echo "--reel") --id "$SENTINEL_ID"
 fi

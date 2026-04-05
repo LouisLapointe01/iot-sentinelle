@@ -16,8 +16,13 @@ export const BLE_CHAR_BUNDLE_SELECT_UUID = '12345678-1234-5678-1234-56789abcdef6
 
 // =============================================================================
 // MQTT (doivent correspondre a raspi_app/config.py MQTT_*)
-// Note : l'application mobile se connecte via WebSocket car c'est le seul
-// transport disponible sans module natif MQTT en React Native.
+//
+// Le broker neOCampus ecoute en TCP sur le port 1882 (commande prof) :
+//   mosquitto_sub -h neocampus.univ-tlse3.fr -t TestTopic/lora/neOCampus/# -p 1882 -u test -P test
+//
+// React Native ne supporte pas TCP natif -- on utilise WebSocket.
+// Port WebSocket a confirmer avec le prof (9001 par defaut Mosquitto).
+// Si 9001 ne fonctionne pas a la fac, essayer 8083 ou 8080.
 // =============================================================================
 export const MQTT_BROKER_WS    = 'ws://neocampus.univ-tlse3.fr:9001';
 export const MQTT_USERNAME     = 'test';
