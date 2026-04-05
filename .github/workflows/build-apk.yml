@@ -42,28 +42,31 @@ jobs:
           cd mobile_app
           npx expo prebuild --platform android --no-install
 
-      - name: Bundle le JS dans les assets Android
+      - name: Générer un keystore de signature pour la CI
         run: |
-          cd mobile_app
-          mkdir -p android/app/src/main/assets
-          npx react-native bundle \
-            --platform android \
-            --dev false \
-            --entry-file index.ts \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res
+          keytool -genkey -v \
+            -keystore /tmp/release.keystore \
+            -alias release \
+            -keyalg RSA -keysize 2048 -validity 9125 \
+            -storepass android -keypass android \
+            -dname "CN=IoT-Sentinelle, OU=CI, O=CI, L=CI, S=CI, C=FR"
 
-      - name: Build APK
+      - name: Build APK Release (JS toujours bundlé)
         run: |
           cd mobile_app/android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=/tmp/release.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=release \
+            -Pandroid.injected.signing.key.password=android \
+            --no-daemon
 
       - name: Upload APK comme artefact
         uses: actions/upload-artifact@v4
         with:
-          name: IoT-Sentinelle-standalone
-          path: mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: IoT-Sentinelle-release
+          path: mobile_app/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 90
 
       - name: Créer ou mettre à jour la Release GitHub
@@ -72,14 +75,14 @@ jobs:
           tag_name: apk-latest
           name: "IoT-Sentinelle — APK Android (dernière version)"
           body: |
-            APK autonome généré automatiquement depuis la branche `main`.
+            APK release généré automatiquement depuis la branche `main`.
             Le bundle JavaScript est inclus — **aucun Metro ni PC requis**.
 
             **Installation :**
-            1. Transférer `app-debug.apk` sur votre Android
+            1. Transférer `app-release.apk` sur votre Android
             2. Activer "Sources inconnues" dans les paramètres
             3. Ouvrir le fichier APK pour installer
 
             **Permissions requises :** Bluetooth, Caméra, Localisation
-          files: mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
+          files: mobile_app/android/app/build/outputs/apk/release/app-release.apk
           make_latest: true
