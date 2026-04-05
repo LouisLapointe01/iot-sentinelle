@@ -257,14 +257,6 @@ export default function App() {
         await connected.discoverAllServicesAndCharacteristics();
         deviceRef.current = connected;
 
-        // Detecter une deconnexion inattendue pendant le transfert.
-        connected.onDisconnected((err) => {
-          if (err) {
-            setStatusMsg(`Connexion BLE perdue : ${err.message}`);
-            setPhase('error');
-          }
-        });
-
         setPhase('downloading');
         await runDownloadPhase(connected, config.ble_service_uuid);
       } catch (err: any) {
