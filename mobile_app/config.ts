@@ -19,9 +19,9 @@ export const BLE_CHAR_BUNDLE_SELECT_UUID = '12345678-1234-5678-1234-56789abcdef6
 // Note : l'application mobile se connecte via WebSocket car c'est le seul
 // transport disponible sans module natif MQTT en React Native.
 // =============================================================================
-export const MQTT_BROKER_WS    = 'ws://192.168.1.56:9001';
-export const MQTT_USERNAME     = '';
-export const MQTT_PASSWORD     = '';
+export const MQTT_BROKER_WS    = 'ws://neocampus.univ-tlse3.fr:9001';
+export const MQTT_USERNAME     = 'test';
+export const MQTT_PASSWORD     = 'test';
 export const MQTT_TOPIC_PREFIX = 'TestTopic/lora/neOCampus';
 
 // =============================================================================
