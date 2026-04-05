@@ -42,16 +42,16 @@ jobs:
           cd mobile_app
           npx expo prebuild --platform android --no-install
 
-      - name: Build APK debug
+      - name: Build APK (JS bundlé, autonome sans Metro)
         run: |
           cd mobile_app/android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug -PbundleInDebug=true --no-daemon
 
       - name: Upload APK comme artefact
         uses: actions/upload-artifact@v4
         with:
-          name: IoT-Sentinelle-debug
+          name: IoT-Sentinelle-standalone
           path: mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 90
 
@@ -61,7 +61,8 @@ jobs:
           tag_name: apk-latest
           name: "IoT-Sentinelle — APK Android (dernière version)"
           body: |
-            APK de débogage généré automatiquement depuis la branche `main`.
+            APK autonome généré automatiquement depuis la branche `main`.
+            Le bundle JavaScript est inclus — **aucun Metro ni PC requis**.
 
             **Installation :**
             1. Transférer `app-debug.apk` sur votre Android
