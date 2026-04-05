@@ -655,7 +655,7 @@ iot-sentinelle/
 | Nom | GitHub |
 |-----|--------|
 | Thomas Collet | [@Thomas97460](https://github.com/Thomas97460) |
-| [Louis Lapointe](https://github.com/LouisLapointe01) | [@LouisLapointe01](https://github.com/LouisLapointe01) |
+| Louis Lapointe | [@LouisLapointe01](https://github.com/LouisLapointe01) |
 | Oussama Guelagli | [@OG-Mihawk](https://github.com/OG-Mihawk) |
 | Bastien Cabanie | — |
 
